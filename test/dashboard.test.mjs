@@ -34,11 +34,11 @@ function fixtureFeed(url, init) {
   }
   if (pathname.endsWith('/sessions')) return Response.json([searchParams.get('session_key') === 'latest' ? live : session]);
   if (pathname.endsWith('/drivers')) return Response.json([{ driver_number: 1, full_name: 'Fixture Driver' }]);
-  if (pathname.endsWith('/laps')) return Response.json([{ lap_number: 1, lap_duration: 90, date_start: session.date_start }]);
+  if (pathname.endsWith('/laps')) return Response.json([{ driver_number: 1, lap_number: 1, lap_duration: 90, date_start: session.date_start }]);
   if (pathname.endsWith('/car_data')) {
     assert.match(url, /&date>[^&]+&date<[^&]+/);
     const date = searchParams.get('session_key') === '99' ? new Date().toISOString() : session.date_start;
-    return Response.json([{ date, speed: 300, throttle: 100, n_gear: 7, rpm: 11500 }]);
+    return Response.json([{ date, driver_number: 1, speed: 300, throttle: 100, n_gear: 7, rpm: 11500 }]);
   }
   throw new Error('Unexpected test provider request: ' + url);
 }
@@ -260,6 +260,9 @@ test('historical telemetry and authorized live mode with provider fixtures', asy
   const time = 'start=2024-03-01T08:00:00Z&end=2024-03-01T08:01:30Z';
   assert.equal((await ok(admin, 'historical/samples?session=42&driver=1&' + time))[0].speed, 300);
   assert.equal((await admin.call('historical/samples?session=42&driver=1&' + time.replace('08:01:30', '09:01:30'))).status, 400);
+  assert.equal((await ok(admin, 'historical/laps?session=42&driver=all'))[0].driver_number, 1);
+  assert.equal((await ok(admin, 'historical/samples?session=42&driver=all&' + time))[0].driver_number, 1);
+  assert.equal((await admin.call('historical/samples?session=42&driver=all&' + time.replace('08:01:30', '08:03:00'))).status, 400);
   assert.equal((await ok(admin, 'live/samples?driver=1')).samples.length, 80);
   const cfg = await ok(admin, 'admin/config');
   const saved = await ok(admin, 'admin/config', { action: 'save', revision: cfg.revision, draft: { ...cfg.draft, live: 'openf1' } });

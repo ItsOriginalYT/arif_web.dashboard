@@ -21,7 +21,7 @@ export async function request(path, data, rawHeaders) {
   const result = await response.json();
   if (!response.ok) {
     if (response.status === 401 && path !== 'login') document.dispatchEvent(new Event('session-ended'));
-    throw new Error(result.error || 'Request failed (' + response.status + ').');
+    throw Object.assign(new Error(result.error || 'Request failed (' + response.status + ').'), { status: response.status });
   }
   return result;
 }

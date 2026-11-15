@@ -85,7 +85,7 @@ This app uses one canonical origin per instance. Open the same HTTPS hostname on
 
 ## Telemetry
 
-**Historical** uses the free OpenF1 archive from 2023 onward. Choose a completed session, driver and lap, load telemetry, then play or seek at 0.5×, 1×, 2× or 4×. For sessions lacking usable lap times, the dashboard offers the opening two-minute window. The app shares a short server-side cache and respects OpenF1's request limits. [OpenF1 API reference](https://openf1.org/docs/)
+**Historical** uses the free OpenF1 archive from 2023 onward. Choose a completed session, driver and lap, load telemetry, then play or seek at 0.5×, 1×, 2× or 4×. Choose **All Drivers** to compare traces and readings at the same elapsed time from each driver's selected lap start. Choose **All Laps** to replay on the shared session clock. Full-session replay keeps roughly one sample per second per driver and can take a few minutes to load within OpenF1's free request limits. For sessions lacking usable lap times, the dashboard offers the opening two-minute window. [OpenF1 API reference](https://openf1.org/docs/)
 
 **Live** starts in clearly labeled simulation mode. To enable real data, obtain authorized OpenF1 Sponsor access and provide the provider credentials in the environment of the service account. For an interactive Windows run, enter the credentials at the prompts below. For an unattended run, inject both values from your service account's secret store.
 

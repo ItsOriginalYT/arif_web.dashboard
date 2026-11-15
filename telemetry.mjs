@@ -23,10 +23,10 @@ function fields(row, names) {
   return Object.fromEntries(names.map(name => [name, row[name] ?? null]));
 }
 
-const carFields = ['date', 'speed', 'throttle', 'brake', 'n_gear', 'rpm', 'drs'];
+const carFields = ['date', 'driver_number', 'speed', 'throttle', 'brake', 'n_gear', 'rpm', 'drs'];
 const driverFields = ['driver_number', 'full_name', 'name_acronym', 'team_name', 'team_colour'];
 const sessionFields = ['session_key', 'session_name', 'location', 'country_name', 'date_start', 'date_end'];
-const lapFields = ['lap_number', 'date_start', 'lap_duration', 'is_pit_out_lap'];
+const lapFields = ['driver_number', 'lap_number', 'date_start', 'lap_duration', 'is_pit_out_lap'];
 
 function quota(perSecond, perMinute) {
   let history = [];
@@ -131,7 +131,7 @@ export function telemetry({ account, fetcher = fetch }) {
 
   function carPath(session, driver, start, end) {
     const format = time => encodeURIComponent(new Date(time).toISOString().slice(0, -1));
-    return 'car_data?session_key=' + session + '&driver_number=' + driver +
+    return 'car_data?session_key=' + session + (driver === 'all' ? '' : '&driver_number=' + driver) +
       '&date>' + format(start) + '&date<' + format(end);
   }
 
@@ -153,16 +153,18 @@ export function telemetry({ account, fetcher = fetch }) {
       const rows = await load('drivers?session_key=' + session, false, 300_000);
       return rows.map(row => fields(row, driverFields));
     }
-    const driver = integer(query.get('driver'), 1, 999, 'driver');
+    const driver = query.get('driver') === 'all' ? 'all' : integer(query.get('driver'), 1, 999, 'driver');
     if (action === 'laps') {
-      const rows = await load('laps?session_key=' + session + '&driver_number=' + driver, false, 300_000);
+      const rows = await load('laps?session_key=' + session +
+        (driver === 'all' ? '' : '&driver_number=' + driver), false, 300_000);
       return rows.map(row => fields(row, lapFields)).sort((a, b) => a.lap_number - b.lap_number);
     }
     if (action === 'samples') {
       const start = timestamp(query.get('start'));
       const end = timestamp(query.get('end'));
-      if (end <= start || end - start > 300_000 || end > Date.now() - 30 * minute) {
-        throw new HttpError(400, 'Choose a historical window of up to five minutes.');
+      const maxWindow = driver === 'all' ? 120_000 : 300_000;
+      if (end <= start || end - start > maxWindow || end > Date.now() - 30 * minute) {
+        throw new HttpError(400, 'Choose a historical window of up to ' + maxWindow / minute + ' minutes.');
       }
       return samples(await load(carPath(session, driver, start, end), false, 600_000));
     }
