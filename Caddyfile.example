@@ -1,0 +1,5 @@
+# Set ADAM_TRANSPORT=proxy and use https://your-dashboard.playit.plus as ADAM_PUBLIC_ORIGIN.
+# Replace this hostname with the one assigned to your deployment.
+your-dashboard.playit.plus {
+    reverse_proxy 127.0.0.1:8765
+}
