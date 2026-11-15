@@ -1,3 +1,86 @@
+# Recommended to be included by ChatGPT (the original template data is below)
+
+# ============================
+# ARIF WEB DASHBOARD
+# ============================
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# JavaScript / Node.js
+node_modules/
+.npm/
+dist/
+build/
+.vite/
+.next/
+*.tsbuildinfo
+
+# Environment variables / Secrets
+.env
+.env.*
+!.env.example
+secrets/
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Database files
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal
+
+# Private user data
+uploads/
+user-data/
+private/
+backups/
+
+# Temporary files and logs
+logs/
+cache/
+tmp/
+temp/
+*.log
+*.tmp
+
+# Local configuration
+config/local.json
+config/secrets.json
+
+# HTTPS certificates
+certs/
+certificates/
+
+# Operating system
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE files
+.vscode/
+.idea/
+
+
+
+
+# The following is from the .gitignore Python template
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
