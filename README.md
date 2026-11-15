@@ -6,7 +6,7 @@ Repository ID `arif_web.dashboard`. The dashboard uses HTML, CSS and JavaScript 
 
 ## Start on Windows
 
-1. Install the current 64-bit Node.js 24 LTS release, copy this folder to a local drive on ADAM-SERVER-1, and open PowerShell in that folder. The app uses Node's built-in SQLite and needs no package install. [Node.js downloads](https://nodejs.org/en/download) · [Node.js 24 platform support](https://github.com/nodejs/node/blob/v24.x/BUILDING.md)
+1. Install 64-bit Node.js 24.11 or newer, copy this folder to a local drive on ADAM-SERVER-1, and open PowerShell in that folder. The app uses Node's built-in SQLite and needs no package install. [Node.js downloads](https://nodejs.org/en/download)
 2. Run the bootstrap script and enter the temporary Administrator password from your specification at the hidden prompt. It creates one `Administrator` account, stores a salted scrypt hash, and requires password rotation at first sign-in. Run it once per database.
 3. Start the app and open [the local dashboard](http://127.0.0.1:8765/) on the host. Sign in as `Administrator` and change the temporary password before opening LAN access. Create other accounts under **Administration → Users**.
 
@@ -126,4 +126,4 @@ The tests use temporary SQLite databases and sample live-provider responses. The
 
 After installation, test chat from two devices on the LAN. Sign in as different accounts, send a message and a small file in both directions, and verify that a third account cannot open the file. Repeat over Playit from a device on another network after remote access and licensing are in place.
 
-For Windows Server 2022 or Ubuntu 24.04 LTS, install the same Node 24 major release on the new host, stop the old service, and copy the application and the entire `ADAM_DATA` directory together, including any SQLite sidecar files. Keep backup copies of the data directory private. Provide TLS keys and OpenF1 credentials separately on the new server, then run `node server.mjs` from the application directory. On Ubuntu, launch it under a dedicated systemd service account. Existing accounts, files and version history come from the migrated database, so keep the copied path as `ADAM_DATA` and start it directly.
+For Windows Server 2022 or Ubuntu 24.04 LTS, install Node.js 24.11 or newer on the new host, stop the old service, and copy the application and the entire `ADAM_DATA` directory together, including any SQLite sidecar files. Keep backup copies of the data directory private. Provide TLS keys and OpenF1 credentials separately on the new server, then run `node server.mjs` from the application directory. On Ubuntu, launch it under a dedicated systemd service account. Existing accounts, files and version history come from the migrated database, so keep the copied path as `ADAM_DATA` and start it directly.

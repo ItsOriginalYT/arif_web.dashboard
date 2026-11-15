@@ -1,4 +1,4 @@
-# Requires Git for Windows, Node.js 24 LTS (24.11 or newer), and Caddy 2.
+# Requires Git for Windows, Node.js with built-in SQLite support, and Caddy 2.
 [CmdletBinding()]
 param(
     [string]$ProjectDirectory = 'I:\IntendedUseStorage\Websites\ArifWebDashboard',
@@ -46,11 +46,7 @@ try {
     $git = (Get-Command git.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1).Source
     $node = (Get-Command node.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1).Source
     if (!$git) { throw 'Install Git for Windows, then reopen PowerShell.' }
-    if (!$node) { throw 'Install Node.js 24 LTS, then reopen PowerShell.' }
-    $nodeVersion = & $node --version
-    if ($LASTEXITCODE -ne 0 -or $nodeVersion -notmatch '^v24\.(\d+)\.\d+$' -or [int]$Matches[1] -lt 11) {
-        throw "Node.js 24 LTS (24.11 or newer) is required. Found: $nodeVersion"
-    }
+    if (!$node) { throw 'Install Node.js, then reopen PowerShell.' }
 
     $ProjectDirectory = [IO.Path]::GetFullPath($ProjectDirectory)
     $driveRoot = [IO.Path]::GetPathRoot($ProjectDirectory)
