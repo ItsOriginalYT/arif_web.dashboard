@@ -33,15 +33,43 @@ function validate(data, providerReady) {
   return Object.fromEntries(Object.keys(factory).map(key => [key, key === 'title' ? data[key].trim() : data[key]]));
 }
 
-export function configuration(store, providerReady) {
+export function validateFileSettings(settings, providerReady) {
+  const normalized = validate({ ...factory, ...settings }, providerReady);
+  return Object.fromEntries(Object.keys(settings).map(key => [key, normalized[key]]));
+}
+
+export function configuration(store, providerReady, fileSettings = {}) {
   const { all, get, run, tx, audit } = store;
-  tx(() => {
-    if (get('SELECT id FROM config')) return;
-    const body = json(factory);
-    const initial = run('INSERT INTO versions(body,at,author) VALUES(?,?,?)', body, now(), 'System');
-    run('INSERT INTO config VALUES(1,?,1,?,?)', initial.lastInsertRowid, body, body);
-  });
+  const file = validateFileSettings(fileSettings, providerReady);
   const state = () => get('SELECT c.*, v.body AS current, v.parent FROM config c JOIN versions v ON c.active=v.id');
+  tx(() => {
+    if (!get('SELECT id FROM config')) {
+      const body = json(factory);
+      const initial = run('INSERT INTO versions(body,at,author) VALUES(?,?,?)', body, now(), 'System');
+      run('INSERT INTO config VALUES(1,?,1,?,?)', initial.lastInsertRowid, body, body);
+    }
+    store.db.exec('CREATE TABLE IF NOT EXISTS config_file (id INTEGER PRIMARY KEY CHECK(id=1), body TEXT NOT NULL)');
+    const previous = parse(get('SELECT body FROM config_file WHERE id=1')?.body ?? '{}');
+    const changed = Object.keys(file).filter(key => file[key] !== previous[key]);
+    if (changed.length) {
+      const row = state();
+      const changes = Object.fromEntries(changed.map(key => [key, file[key]]));
+      const active = json({ ...parse(row.current), ...changes });
+      const draft = json({ ...parse(row.draft), ...changes });
+      if (active !== row.current) {
+        const author = 'Configuration file';
+        const version = run('INSERT INTO versions(parent,body,at,author) VALUES(?,?,?,?)', row.active, active, now(), author);
+        run('UPDATE config SET active=?,draft=?,revision=revision+1 WHERE id=1', version.lastInsertRowid, draft);
+        run('DELETE FROM previews');
+        audit(author, 'config.file-apply', { version: Number(version.lastInsertRowid), changed });
+      } else if (draft !== row.draft) {
+        run('UPDATE config SET draft=?,revision=revision+1 WHERE id=1', draft);
+      }
+    }
+    if (changed.length || Object.keys(previous).length !== Object.keys(file).length) {
+      run('INSERT INTO config_file VALUES(1,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body', json(file));
+    }
+  });
   const preview = session => get('SELECT body,expires FROM previews WHERE session=? AND expires>?', session, Date.now());
   const confirmations = new Map();
 

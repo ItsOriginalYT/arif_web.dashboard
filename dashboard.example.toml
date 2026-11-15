@@ -1,0 +1,36 @@
+# Copy this file to dashboard.toml. Uncomment only the settings you want to change.
+# Paths in this file are relative to its location. Use single quotes for Windows backslashes.
+
+[server]
+# Used when starting Node directly. The LAN launcher manages transport and ports via [lan].
+# transport = 'local'                 # local, tls, or proxy
+# host = '127.0.0.1'
+# port = 8765
+# public_origin = 'https://adam-server-1:8765' # Required for tls/proxy. No trailing slash.
+# data_directory = 'data'
+# data_directory = 'C:\Arif-WebDashboard\data' # Example for an internal SSD.
+# tls_cert = 'C:\Dashboard-TLS\fullchain.pem'
+# tls_key = 'C:\Dashboard-TLS\privkey.pem'
+
+[lan]
+# Used by Start-ArifWebDashboard-LAN.ps1.
+# address = '192.168.100.63'
+# port = 8765
+# backend_port = 8766
+
+[dashboard]
+# Changed values here are applied on app startup. Other settings use the admin console's active version.
+# title = 'Arif WebDashboard'
+# historical = true
+# live = 'mock'                       # mock, openf1, or off
+# chat = true
+# max_file_mib = 8                    # 1 to 16
+# test_seconds = 15                   # 1 to 120
+# historical_transport = 'inherit'    # inherit or https
+# live_transport = 'inherit'
+# chat_transport = 'inherit'
+
+[openf1]
+# Names only. Put the real values in environment variables or your ignored .env file.
+# username_env = 'OPENF1_USERNAME'
+# password_env = 'OPENF1_PASSWORD'

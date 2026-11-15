@@ -1,11 +1,13 @@
 import { createServer as http } from 'node:http';
 import { createServer as https } from 'node:https';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { DatabaseSync } from 'node:sqlite';
 import { platform, release, arch, hostname, totalmem, freemem, uptime } from 'node:os';
-import { resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { accounts } from './accounts.mjs';
-import { configuration } from './config.mjs';
+import { configuration, validateFileSettings } from './config.mjs';
+import { readSettings } from './settings-file.mjs';
 import { bootstrap, HttpError, json, now, openStore, parse } from './storage.mjs';
 import { integer, telemetry } from './telemetry.mjs';
 
@@ -40,29 +42,31 @@ function debugPath(path) {
   return '/api/(other)';
 }
 
-function environment(env = process.env) {
-  const mode = env.ADAM_TRANSPORT ?? 'local';
-  const host = env.ADAM_HOST ?? '127.0.0.1';
-  const port = integer(env.ADAM_PORT ?? '8765', 1, 65535, 'port');
+export function environment(env = process.env, file = readSettings(env)) {
+  const { server, dashboard, openf1 } = file;
+  const mode = env.ADAM_TRANSPORT ?? server.transport ?? 'local';
+  const host = env.ADAM_HOST ?? server.host ?? '127.0.0.1';
+  const port = integer(env.ADAM_PORT ?? server.port ?? 8765, 1, 65535, 'port');
   if (!['local', 'tls', 'proxy'].includes(mode)) throw new Error('ADAM_TRANSPORT must be local, tls or proxy.');
   if (mode !== 'tls' && !loopback(host)) throw new Error('Local and proxy modes must bind to a loopback address.');
-  const publicOrigin = env.ADAM_PUBLIC_ORIGIN;
+  const publicOrigin = env.ADAM_PUBLIC_ORIGIN ?? server.public_origin;
   if (mode !== 'local') {
     const url = new URL(publicOrigin ?? 'https://invalid.local/');
     if (!publicOrigin || url.origin !== publicOrigin || url.protocol !== 'https:') {
       throw new Error('Set ADAM_PUBLIC_ORIGIN to the canonical HTTPS origin without a trailing slash.');
     }
   }
-  const username = env.OPENF1_USERNAME;
-  const password = env.OPENF1_PASSWORD;
+  const username = env[openf1.username_env ?? 'OPENF1_USERNAME'];
+  const password = env[openf1.password_env ?? 'OPENF1_PASSWORD'];
   if (Boolean(username) !== Boolean(password)) throw new Error('Set both OpenF1 credentials or leave both unset.');
   const account = username && password ? { username, password } : undefined;
   const tls = mode === 'tls' ? {
-    key: readFileSync(env.ADAM_TLS_KEY ?? ''),
-    cert: readFileSync(env.ADAM_TLS_CERT ?? ''),
+    key: readFileSync(env.ADAM_TLS_KEY ?? server.tls_key ?? ''),
+    cert: readFileSync(env.ADAM_TLS_CERT ?? server.tls_cert ?? ''),
     minVersion: 'TLSv1.2'
   } : undefined;
-  return { mode, host, port, publicOrigin, account, tls, directory: resolve(env.ADAM_DATA ?? 'data') };
+  return { mode, host, port, publicOrigin, account, tls, dashboard: validateFileSettings(dashboard, Boolean(account)),
+    directory: resolve(env.ADAM_DATA ?? server.data_directory ?? 'data') };
 }
 
 function limiter() {
@@ -220,7 +224,7 @@ function chat(store, request, response, url, context, config, authorize, limit) 
 
 export function createDashboard(options, fetcher = fetch) {
   const store = openStore(options.directory);
-  const config = configuration(store, Boolean(options.account));
+  const config = configuration(store, Boolean(options.account), options.dashboard);
   const auth = accounts(store);
   const provider = telemetry({ account: options.account, fetcher });
   const rate = limiter();
@@ -261,6 +265,10 @@ export function createDashboard(options, fetcher = fetch) {
       const pending = pendingLifecycle.get(context.session);
       if (words.length !== 2 || b !== 'confirm' || pending?.action !== a || pending.until <= time) {
         throw new HttpError(409, 'Enter ' + a + ' first to request confirmation.');
+      }
+      if (a === 'restart' && options.validateRestart) {
+        try { options.validateRestart(); }
+        catch (error) { throw new HttpError(400, error.message); }
       }
       store.audit(context.user.username, 'application.' + a);
       pendingLifecycle.delete(context.session);
@@ -465,8 +473,28 @@ export function createDashboard(options, fetcher = fetch) {
 }
 
 async function main() {
-  const options = environment();
+  if (process.argv[2] === 'lan-settings') {
+    const { lan } = readSettings();
+    console.log(json(lan));
+    return;
+  }
+  if (process.argv[2] === 'check-config') {
+    environment();
+    console.log('Dashboard configuration is valid.');
+    return;
+  }
+  if (process.argv[2] === 'account-status') {
+    const path = join(environment().directory, 'dashboard.sqlite');
+    if (!existsSync(path)) { console.log('setup'); return; }
+    const db = new DatabaseSync(path, { readOnly: true });
+    try {
+      const table = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='users'").get();
+      console.log(table && db.prepare('SELECT 1 FROM users LIMIT 1').get() ? 'ready' : 'setup');
+    } finally { db.close(); }
+    return;
+  }
   if (process.argv[2] === 'bootstrap') {
+    const options = environment();
     if (process.stdin.isTTY) throw new Error('Pipe the temporary password from a hidden prompt. See README.md.');
     const chunks = [];
     let length = 0;
@@ -503,7 +531,8 @@ async function main() {
     });
   }
   function launch() {
-    app = createDashboard({ ...options, lifecycle });
+    const options = environment();
+    app = createDashboard({ ...options, lifecycle, validateRestart: environment });
     if (!app.store.get('SELECT id FROM users LIMIT 1')) {
       app.store.db.close();
       throw new Error('Bootstrap Administrator before starting the server. See README.md.');

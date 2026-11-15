@@ -29,7 +29,22 @@ finally {
 
 Start the app from the same directory as bootstrap, or set `ADAM_DATA` to the same absolute path for both commands. For unattended startup on Windows, use a dedicated low-privilege account and a startup task that runs `node server.mjs` with this folder as its working directory. Restrict the data directory and TLS key to the service account and backup operators.
 
-For deployment settings, copy [the environment template](.env.example) to `.env` and start with `node --env-file=.env server.mjs`. For bootstrap with that file, pass the hidden prompt's output to `node --env-file=.env server.mjs bootstrap` so both commands use the same database.
+## Configure with TOML
+
+Copy [dashboard.example.toml](dashboard.example.toml) to `dashboard.toml` in the project folder. Uncomment and edit the settings you want. Use single quotes for Windows paths. Relative paths in the file are relative to the file itself.
+
+~~~powershell
+Copy-Item dashboard.example.toml dashboard.toml
+notepad dashboard.toml
+node --env-file-if-exists=.env server.mjs check-config
+~~~
+
+- `[server]` sets the host, port, transport, HTTPS origin, data directory, and certificate paths. Existing process environment variables and values loaded from `.env` take precedence over their TOML counterparts.
+- `[lan]` sets the Windows LAN launcher's IPv4 address, HTTPS port, and separate loopback backend port. The launcher manages the corresponding server transport settings. Stop and rerun the launcher after changing these ports or the LAN address. If you use the launcher's firewall rule, rerun `-ConfigureFirewall` for the new address or port.
+- `[dashboard]` controls the site name, available services, live mode, per-file attachment limit, TEST duration, and HTTPS requirements. On startup, new or changed settings are applied as a versioned configuration update. Admin changes continue to work between file edits. Removing a key leaves its last active value in the database. Accounts and personal preferences are managed in the dashboard.
+- `[openf1]` can name the environment variables that supply provider credentials. Store their values in the service environment or the ignored `.env` file. For direct startup with `.env`, use `node --env-file=.env server.mjs` and use the same option for bootstrap.
+
+Restart the app to load edits. Set `ADAM_CONFIG` to load a different TOML file. Keep that file out of source control if it contains deployment-specific details.
 
 ## Network and transport
 
