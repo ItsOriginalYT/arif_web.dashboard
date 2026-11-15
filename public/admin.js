@@ -68,6 +68,20 @@ export function admin(parent, state, lifecycle, controller) {
       maxLength: 120, spellcheck: false });
     const run = submit('Run');
     const error = labelError();
+    const debug = el('pre', { className: 'console', hidden: true, 'aria-label': 'HTTP request metadata' });
+    async function refreshDebug() {
+      const state = await request('admin/debug');
+      if (!live()) return;
+      debug.hidden = !state.enabled;
+      debug.textContent = state.requests.map(row => row.method + ' ' + row.path + ' → ' + row.status + ' (' + row.ms + ' ms)').join('\n')
+        || 'Waiting for requests in this session.';
+    }
+    const monitor = setInterval(() => {
+      if (!live()) clearInterval(monitor);
+      else if (!debug.hidden) refreshDebug().catch(() => {});
+    }, 4000);
+    lifecycle.cleanup(() => clearInterval(monitor));
+    refreshDebug().catch(() => {});
     let cursor = history.length;
     function paint() {
       terminal.replaceChildren(...transcript.map(row => el('div', { className: row.command ? 'terminal-prompt' : '' }, row.text)));
@@ -89,9 +103,14 @@ export function admin(parent, state, lifecycle, controller) {
       const value = command.value.trim();
       if (!value) return;
       command.value = '';
+      if (/^runas(?:\s|$)/i.test(value)) {
+        error.textContent = 'Use a Windows terminal on the server for Windows account commands.';
+        return;
+      }
       task(run, error, async () => {
-        const cfg = await request('admin/config');
-        const action = value.toLowerCase().split(/\s+/).at(-1);
+        const direct = /^(restart|stop|debug)(?:\s|$)/i.test(value);
+        const cfg = direct ? {} : await request('admin/config');
+        const action = direct ? '' : value.toLowerCase().split(/\s+/).at(-1);
         const result = await configAction('admin/console', { command: value, revision: cfg.revision, draft: cfg.draft }, action, live);
         if (!live()) return;
         history.push(value);
@@ -106,13 +125,15 @@ export function admin(parent, state, lifecycle, controller) {
           add('Configuration updated. Active version ' + result.state.active + '.');
           await controller.refresh();
         } else {
-          add(Array.isArray(result.output) && result.output.every(item => typeof item === 'string')
-            ? result.output.join('\n') : JSON.stringify(result.output, null, 2));
+          add(typeof result.output === 'string' ? result.output :
+            Array.isArray(result.output) && result.output.every(item => typeof item === 'string')
+              ? result.output.join('\n') : JSON.stringify(result.output, null, 2));
         }
         paint();
+        if (/^debug(?:\s|$)/i.test(value)) await refreshDebug();
       });
     };
-    content.append(panel(el('h2', {}, 'Command console'), terminal, form, error));
+    content.append(panel(el('h2', {}, 'Command console'), terminal, form, error, debug));
     paint();
   }
 

@@ -116,6 +116,12 @@ The console runs application commands such as `help`, `system info`, `users list
 
 Chat messages and attachment downloads are restricted to the participants. Attachments default to 8 MiB each and 128 MiB total per sender. Messages and files are stored in SQLite in readable form for the server operator. HTTPS protects them in transit. Deleting an account removes that account and its conversations from both sides.
 
+### Application controls and debug
+
+The admin console supports `restart` and `stop`. Enter `restart confirm` or `stop confirm` in the same signed-in session within 60 seconds. Restart reloads the application on the same address. After stop, start it again from Windows with the launcher.
+
+`debug on` shows recent HTTP methods, route names, response statuses, and timings for your admin session. `debug off` clears the view and stops collecting. Request bodies, headers, query strings, and resource IDs are excluded.
+
 ## Tests, backup and migration
 
 ~~~powershell

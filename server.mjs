@@ -26,10 +26,19 @@ const chatPath = /^\/api\/chat\/(?:with\/(\d+)(\/file)?|attachment\/(\d+))$/;
 const userPath = /^\/api\/admin\/users(?:\/(\d+))?$/;
 const commands = [
   'help', 'system info', 'users list', 'users create <username>', 'users edit <id>', 'users delete <id>',
+  'restart', 'restart confirm', 'stop', 'stop confirm', 'debug on|off',
   'system configuration show|save|test|stop|apply|revert|rewind|reset',
   'system configuration default override', 'system configuration profiles list',
   'system configuration profiles create|load <name>'
 ];
+const debugOn = ['enabled', 'enable', 'on', 'true', 'positive'];
+const debugOff = ['disabled', 'disable', 'off', 'false', 'negative'];
+
+function debugPath(path) {
+  if (/^\/api\/(?:settings|preferences|historical\/(?:sessions|drivers|laps|samples)|live\/(?:info|samples)|chat\/contacts|admin\/(?:console|config|system|users|audit))$/.test(path)) return path;
+  if (chatPath.test(path) || userPath.test(path)) return path.replace(/\d+/g, ':id');
+  return '/api/(other)';
+}
 
 function environment(env = process.env) {
   const mode = env.ADAM_TRANSPORT ?? 'local';
@@ -216,6 +225,17 @@ export function createDashboard(options, fetcher = fetch) {
   const provider = telemetry({ account: options.account, fetcher });
   const rate = limiter();
   let pendingUploads = 0;
+  let shuttingDown = false;
+  const pendingLifecycle = new Map();
+  const debugSessions = new Map();
+  const debugState = session => {
+    const record = debugSessions.get(session);
+    if (record && record.until <= Date.now()) {
+      debugSessions.delete(session);
+      return undefined;
+    }
+    return record;
+  };
   const system = () => ({
     hostname: hostname(), platform: platform(), release: release(), architecture: arch(),
     node: process.version, processUptime: Math.floor(process.uptime()), hostUptime: Math.floor(uptime()),
@@ -228,6 +248,38 @@ export function createDashboard(options, fetcher = fetch) {
     const parts = body.command.trim().split(/\s+/);
     const words = parts.map(part => part.toLowerCase());
     const [a, b, c, d, e] = words;
+    if (a === 'restart' || a === 'stop') {
+      const time = Date.now();
+      if (!options.lifecycle || shuttingDown) throw new HttpError(409, 'Application lifecycle control is unavailable.');
+      if (words.length === 1) {
+        for (const [session, pending] of pendingLifecycle) {
+          if (pending.until <= time) pendingLifecycle.delete(session);
+        }
+        pendingLifecycle.set(context.session, { action: a, until: time + 60000 });
+        return { output: 'Enter ' + a + ' confirm within 60 seconds to continue.' };
+      }
+      const pending = pendingLifecycle.get(context.session);
+      if (words.length !== 2 || b !== 'confirm' || pending?.action !== a || pending.until <= time) {
+        throw new HttpError(409, 'Enter ' + a + ' first to request confirmation.');
+      }
+      store.audit(context.user.username, 'application.' + a);
+      pendingLifecycle.delete(context.session);
+      shuttingDown = true;
+      return { operation: a, output: a === 'restart' ? 'Restarting Arif WebDashboard…' : 'Stopping Arif WebDashboard…' };
+    }
+    if (a === 'debug') {
+      if (words.length > 2 || (b && !debugOn.includes(b) && !debugOff.includes(b))) {
+        throw new HttpError(400, 'Use debug on or debug off.');
+      }
+      if (debugOn.includes(b)) {
+        for (const session of debugSessions.keys()) debugState(session);
+        debugSessions.set(context.session, { until: Date.now() + 12 * 3600000, requests: [] });
+      } else if (debugOff.includes(b)) {
+        debugSessions.delete(context.session);
+      }
+      if (b) store.audit(context.user.username, 'debug.' + (debugOn.includes(b) ? 'enable' : 'disable'));
+      return { output: 'Debug ' + (debugState(context.session) ? 'enabled.' : 'disabled.') };
+    }
     if (a === 'help' && words.length === 1) return { output: commands };
     if (['system', 'syst', 'sys'].includes(a) && b === 'info' && words.length === 2) return { output: system() };
     if (a === 'users' && b === 'list' && words.length === 2) return { output: auth.list() };
@@ -305,6 +357,14 @@ export function createDashboard(options, fetcher = fetch) {
         return send(response, await auth.changePassword(user, body, response, secure, () => requireUser(false, true)));
       }
       const context = requireUser();
+      const debug = context.user.role === 'admin' && debugState(context.session);
+      if (debug && path !== '/api/admin/debug') {
+        const started = Date.now();
+        response.once('finish', () => {
+          debug.requests.push({ method, path: debugPath(path), status: response.statusCode, ms: Date.now() - started });
+          if (debug.requests.length > 40) debug.requests.shift();
+        });
+      }
       rate('user:' + context.user.id, 240, 60_000);
       const serviceConfig = service => {
         const current = requireUser();
@@ -364,7 +424,23 @@ export function createDashboard(options, fetcher = fetch) {
           if (['create-profile', 'override-default'].includes(body.action)) throw new HttpError(403, 'Use the command console for this action.');
           return send(response, config.execute(body.action, body, current));
         }
-        if (method === 'POST' && path === '/api/admin/console') return send(response, await consoleCommand(body, current));
+        if (method === 'GET' && path === '/api/admin/debug') {
+          const record = debugState(current.session);
+          return send(response, { enabled: Boolean(record), requests: record?.requests ?? [] });
+        }
+        if (method === 'POST' && path === '/api/admin/console') {
+          const result = await consoleCommand(body, current);
+          if (result.operation) {
+            const afterResponse = () => {
+              response.off('finish', afterResponse);
+              response.off('close', afterResponse);
+              options.lifecycle(result.operation);
+            };
+            response.once('finish', afterResponse);
+            response.once('close', afterResponse);
+          }
+          return send(response, result);
+        }
       }
       throw new HttpError(404, 'Endpoint not found.');
     } catch (error) {
@@ -411,20 +487,38 @@ async function main() {
     }
     return;
   }
-  const app = createDashboard(options);
-  if (!app.store.get('SELECT id FROM users LIMIT 1')) {
-    app.store.db.close();
-    throw new Error('Bootstrap Administrator before starting the server. See README.md.');
+  let app;
+  let draining = false;
+  let exitRequested = false;
+  function lifecycle(operation) {
+    if (operation === 'stop') exitRequested = true;
+    if (draining || !app.server.listening) return;
+    draining = true;
+    app.server.close(() => {
+      draining = false;
+      if (operation === 'restart' && !exitRequested) {
+        try { launch(); }
+        catch (error) { console.error(error.message); process.exitCode = 1; }
+      }
+    });
   }
-  app.server.on('error', error => {
-    console.error('Unable to start the server:', error.code ?? error.name);
-    process.exitCode = 1;
-  });
-  app.server.listen(options.port, options.host, () => {
-    const address = options.host.includes(':') ? '[' + options.host + ']' : options.host;
-    console.log('Arif WebDashboard: ' + (options.publicOrigin ?? 'http://' + address + ':' + options.port));
-  });
-  for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => app.server.close());
+  function launch() {
+    app = createDashboard({ ...options, lifecycle });
+    if (!app.store.get('SELECT id FROM users LIMIT 1')) {
+      app.store.db.close();
+      throw new Error('Bootstrap Administrator before starting the server. See README.md.');
+    }
+    app.server.on('error', error => {
+      console.error('Unable to start the server:', error.code ?? error.name);
+      process.exitCode = 1;
+    });
+    app.server.listen(options.port, options.host, () => {
+      const address = options.host.includes(':') ? '[' + options.host + ']' : options.host;
+      console.log('Arif WebDashboard: ' + (options.publicOrigin ?? 'http://' + address + ':' + options.port));
+    });
+  }
+  launch();
+  for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => lifecycle('stop'));
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

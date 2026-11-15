@@ -175,6 +175,31 @@ test('one-character passwords work for setup, account creation, changes and rese
   assert.equal((await signIn(client(app), member.username, 'f')).change_required, 0);
 });
 
+test('console lifecycle confirmation and debug are scoped to the administrator session', async t => {
+  const operations = [];
+  const app = await instance(t, { lifecycle: operation => operations.push(operation) });
+  const admin = client(app);
+  const other = client(app);
+  await signIn(admin);
+  await signIn(other, 'Administrator', finished);
+  const command = (client, command) => ok(client, 'admin/console', { command });
+  await command(admin, 'debug positive');
+  await ok(admin, 'settings?secret=redact-this');
+  const debug = await ok(admin, 'admin/debug');
+  assert.equal(debug.enabled, true);
+  assert.ok(debug.requests.some(row => row.method === 'GET' && row.path === '/api/settings' && row.status === 200));
+  assert.ok(!JSON.stringify(debug).includes('redact-this'));
+  assert.deepEqual(await ok(other, 'admin/debug'), { enabled: false, requests: [] });
+  await command(admin, 'debug negative');
+  assert.deepEqual(await ok(admin, 'admin/debug'), { enabled: false, requests: [] });
+  assert.equal((await admin.call('admin/console', { command: 'stop confirm' })).status, 409);
+  assert.match((await command(admin, 'restart')).output, /restart confirm/);
+  assert.equal((await other.call('admin/console', { command: 'restart confirm' })).status, 409);
+  assert.deepEqual(operations, []);
+  assert.equal((await command(admin, 'restart confirm')).operation, 'restart');
+  assert.deepEqual(operations, ['restart']);
+});
+
 test('direct messages, authenticated downloads, limits and account deletion', async t => {
   const app = await instance(t);
   const admin = client(app);
