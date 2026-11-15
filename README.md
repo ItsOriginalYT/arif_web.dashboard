@@ -29,22 +29,26 @@ finally {
 
 Start the app from the same directory as bootstrap, or set `ADAM_DATA` to the same absolute path for both commands. For unattended startup on Windows, use a dedicated low-privilege account and a startup task that runs `node server.mjs` with this folder as its working directory. Restrict the data directory and TLS key to the service account and backup operators.
 
-## Configure with TOML
+## Configure with YAML
 
-Copy [dashboard.example.toml](dashboard.example.toml) to `dashboard.toml` in the project folder. Uncomment and edit the settings you want. Use single quotes for Windows paths. Relative paths in the file are relative to the file itself.
+Copy [config.example.yaml](config.example.yaml) to `config.yaml` in the project folder. The template lists the current defaults. Edit the values you want to change. Use single quotes for Windows paths. Relative paths in the file are relative to the file itself.
 
 ~~~powershell
-Copy-Item dashboard.example.toml dashboard.toml
-notepad dashboard.toml
+Copy-Item config.example.yaml config.yaml
+notepad config.yaml
 node --env-file-if-exists=.env server.mjs check-config
 ~~~
 
-- `[server]` sets the host, port, transport, HTTPS origin, data directory, and certificate paths. Existing process environment variables and values loaded from `.env` take precedence over their TOML counterparts.
-- `[lan]` sets the Windows LAN launcher's IPv4 address, HTTPS port, and separate loopback backend port. The launcher manages the corresponding server transport settings. Stop and rerun the launcher after changing these ports or the LAN address. If you use the launcher's firewall rule, rerun `-ConfigureFirewall` for the new address or port.
-- `[dashboard]` controls the site name, available services, live mode, per-file attachment limit, TEST duration, and HTTPS requirements. On startup, new or changed settings are applied as a versioned configuration update. Admin changes continue to work between file edits. Removing a key leaves its last active value in the database. Accounts and personal preferences are managed in the dashboard.
-- `[openf1]` can name the environment variables that supply provider credentials. Store their values in the service environment or the ignored `.env` file. For direct startup with `.env`, use `node --env-file=.env server.mjs` and use the same option for bootstrap.
+- `server` sets the host, port, transport, HTTPS origin, data directory, and certificate paths. Existing process environment variables and values loaded from `.env` take precedence.
+- `lan` sets the Windows launcher's IPv4 address, HTTPS port, loopback backend port, and optional Caddy paths. Stop and rerun the launcher after changing those settings. If you use the launcher's firewall rule, rerun `-ConfigureFirewall` for the new address or port.
+- `dashboard` controls the site name, enabled services, live mode, per-file attachment limit, TEST duration, and HTTPS requirements. On startup, new or changed settings are applied as a versioned update. Admin changes continue to work between file edits. Removing a key leaves its last active value in the database.
+- `openf1` names the environment variables that supply provider credentials. Store their values in the service environment or the ignored `.env` file. For direct startup with `.env`, use `node --env-file=.env server.mjs` and use the same option for bootstrap.
+- `ui` configures default theme, speed units, replay speed, polling, and chart sampling. Users can save their own preferences.
+- `limits` configures password length, session expiry, request and upload limits, chat quota, OpenF1 request limits, and diagnostic log sizes. Match OpenF1 request limits to your plan.
 
-Restart the app to load edits. Set `ADAM_CONFIG` to load a different TOML file. Keep that file out of source control if it contains deployment-specific details.
+Restart the app to load edits. The YAML file uses top-level sections and indented one-line values. Set `ADAM_CONFIG` to load a different `.yaml`, `.yml`, or `.toml` file. Accounts, password hashes, chat data, and version history live in the database.
+
+Existing `dashboard.toml` files are used when `config.yaml` is absent. To carry your current settings into YAML, run `node server.mjs migrate-config` in the project folder. This creates `config.yaml` with your existing settings and refuses to overwrite one already there.
 
 ## Network and transport
 

@@ -1,7 +1,7 @@
 import { admin } from './admin.js';
 import { chat } from './chat.js';
 import { historical, live } from './timing.js';
-import { button, check, el, field, labelError, line, notice, panel, preferences, request, select, submit, tag, task, title } from './ui.js';
+import { button, check, el, field, labelError, line, notice, panel, preferences, request, select, submit, tag, task, title, uiDefaults, validatePasswordLength } from './ui.js';
 
 const app = document.querySelector('#app');
 const color = matchMedia('(prefers-color-scheme: light)');
@@ -23,6 +23,16 @@ let preview;
 let accountName;
 let connection;
 let loadingSettings = false;
+let settingsPoll;
+let settingsPollMs;
+
+function scheduleSettingsPoll() {
+  const interval = page ? state.ui?.settings_poll_ms ?? uiDefaults.settings_poll_ms : 0;
+  if (interval === settingsPollMs) return;
+  clearInterval(settingsPoll);
+  settingsPollMs = interval;
+  if (interval) settingsPoll = setInterval(() => { refreshConfig().catch(() => {}); }, interval);
+}
 
 function brand() {
   return el('div', { className: 'brand' }, el('span', { className: 'brand-mark', 'aria-hidden': 'true' }, 'A'),
@@ -30,7 +40,7 @@ function brand() {
 }
 
 function theme() {
-  const chosen = state.user ? preferences(state.user).theme : 'dark';
+  const chosen = state.user ? preferences(state.user, state.ui).theme : 'dark';
   document.documentElement.dataset.theme = chosen === 'system' ? (color.matches ? 'light' : 'dark') : chosen;
 }
 color.addEventListener('change', theme);
@@ -63,6 +73,7 @@ function authPage() {
   stopPage();
   currentRoute = null;
   page = null;
+  scheduleSettingsPoll();
   const changing = Boolean(state.user?.change_required);
   const user = el('input', { name: 'username', autocomplete: 'username', required: true, maxLength: 32, autofocus: !changing });
   const current = el('input', { name: 'current', type: 'password', autocomplete: 'current-password', required: true,
@@ -83,6 +94,7 @@ function authPage() {
     event.preventDefault();
     task(submitButton, error, async () => {
       if (changing && next.value !== confirm.value) throw new Error('The new passwords do not match.');
+      if (changing) validatePasswordLength(next.value, state.limits);
       state.user = changing ? await request('password', { current: current.value, password: next.value })
         : await request('login', { username: user.value, password: current.value });
       current.value = next.value = confirm.value = '';
@@ -119,7 +131,9 @@ function workspace() {
   app.replaceChildren(el('div', { className: 'shell' }, rail,
     el('main', { className: 'workspace' }, el('header', { className: 'top' }, topName, connection),
       el('div', { className: 'page stack' }, preview, page))));
+  theme();
   updateFrame();
+  scheduleSettingsPoll();
   route();
 }
 
@@ -165,20 +179,24 @@ async function refreshConfig() {
     const next = await request('settings');
     if (!page || state.user?.id !== userId) return;
     const previous = state.config;
+    const uiChanged = JSON.stringify(state.ui) !== JSON.stringify(next.ui) ||
+      JSON.stringify(state.limits) !== JSON.stringify(next.limits);
     Object.assign(state, next);
+    if (uiChanged) theme();
     updateFrame();
+    scheduleSettingsPoll();
     const service = currentRoute;
-    if (['historical', 'live', 'chat'].includes(service) &&
+    if (uiChanged || (['historical', 'live', 'chat'].includes(service) &&
         (previous[service] !== next.config[service] ||
           previous[service + 'Transport'] !== next.config[service + 'Transport'] ||
-          (service === 'chat' && previous.maxFileMiB !== next.config.maxFileMiB))) route();
+          (service === 'chat' && previous.maxFileMiB !== next.config.maxFileMiB)))) route();
   } finally {
     loadingSettings = false;
   }
 }
 
 function settings(parent, model, lifecycle) {
-  const pref = preferences(model.user);
+  const pref = preferences(model.user, model.ui);
   parent.append(title('Settings', 'Set your display preferences, replay speed and chat alerts.'));
   const appearance = select([['dark', 'Dark'], ['light', 'Light'], ['system', 'Match device']], pref.theme);
   const units = select([['kmh', 'Kilometres per hour'], ['mph', 'Miles per hour']], pref.units);
@@ -213,6 +231,7 @@ function settings(parent, model, lifecycle) {
     event.preventDefault();
     task(change, passwordError, async () => {
       if (next.value !== confirm.value) throw new Error('The new passwords do not match.');
+      validatePasswordLength(next.value, model.limits);
       const user = await request('password', { current: old.value, password: next.value });
       if (model.user?.id === user.id) model.user = user;
       passwordForm.reset();
@@ -230,7 +249,6 @@ function settings(parent, model, lifecycle) {
 window.addEventListener('hashchange', route);
 document.addEventListener('session-ended', signout);
 setInterval(() => { if (page) updateFrame(); }, 500);
-setInterval(() => { refreshConfig().catch(() => {}); }, 2500);
 start().catch(error => {
   if (state.user) signout();
   else app.replaceChildren(el('main', { className: 'auth-shell' }, panel(el('h1', {}, 'Connection unavailable'),

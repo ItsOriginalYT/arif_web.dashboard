@@ -1,4 +1,4 @@
-import { button, el, field, labelError, line, option, panel, preferences, query, request, select, serviceProblem, table, tag, title } from './ui.js';
+import { button, el, field, labelError, line, option, panel, preferences, query, request, select, serviceProblem, table, tag, title, uiOptions } from './ui.js';
 
 const traceColor = index => 'hsl(' + (index * 137.5 % 360) + ', 78%, 61%)';
 
@@ -9,7 +9,7 @@ function svg(name, attributes, content) {
   return node;
 }
 
-function instrument(units, live) {
+function instrument(units, live, maxPoints) {
   const mph = units === 'mph';
   const speed = value => Math.round(value * (mph ? 0.621371 : 1));
   const labels = [['Speed', mph ? 'mph' : 'km/h'], ['Throttle', '%'], ['Gear', 'selected'], ['Engine', 'rpm']];
@@ -43,7 +43,7 @@ function instrument(units, live) {
       return;
     }
     for (const track of tracks ?? [{ rows: samples }]) {
-      const stride = Math.max(1, Math.ceil(track.rows.length / 1500));
+      const stride = Math.max(1, Math.ceil(track.rows.length / maxPoints));
       const plotted = track.rows.filter((_, index) => index % stride === 0 || index === track.rows.length - 1);
       const style = track.color ? { stroke: track.color, fill: 'none', 'vector-effect': 'non-scaling-stroke' } : { class: 'trace' };
       if (plotted.length === 1) graph.append(svg('circle', { cx: x(plotted[0]), cy: y(plotted[0]), r: 4, ...style }));
@@ -86,8 +86,9 @@ export function historical(parent, state, lifecycle) {
     parent.append(panel(el('p', { className: 'notice' }, disabled)));
     return;
   }
-  const pref = preferences(state.user);
-  const dash = instrument(pref.units, false);
+  const ui = uiOptions(state.ui);
+  const pref = preferences(state.user, ui);
+  const dash = instrument(pref.units, false, ui.trace_max_points);
   const yearNow = new Date().getFullYear();
   const years = Array.from({ length: yearNow - 2022 }, (_, index) => [yearNow - index, yearNow - index]);
   const year = select(years);
@@ -140,7 +141,7 @@ export function historical(parent, state, lifecycle) {
       else high = middle;
     }
     const row = rows[low - 1];
-    return row && position - row.elapsed < 5000 ? row : undefined;
+    return row && position - row.elapsed < ui.sample_hold_ms ? row : undefined;
   }
   function render() {
     let displayed;
@@ -278,7 +279,8 @@ export function historical(parent, state, lifecycle) {
       }));
       const byDriver = new Map(next.map(track => [track.driver.driver_number, track]));
       const lapWindows = new Map(windows.map(window => [window.driver, window]));
-      const chunk = driverKey === 'all' ? 120000 : 300000;
+      const chunk = driverKey === 'all' ? state.limits?.historical_all_window_ms ?? 120000
+        : state.limits?.historical_window_ms ?? 300000;
       let count = 0;
       for (let from = start; from < end && fresh(); from += chunk) {
         const until = Math.min(from + chunk, end);
@@ -290,7 +292,7 @@ export function historical(parent, state, lifecycle) {
         } catch (failure) {
           if (!full || failure.status !== 503 || !/rate.limit|request limit/i.test(failure.message)) throw failure;
           loading.textContent = 'Waiting for the OpenF1 request limit…';
-          await new Promise(resolve => setTimeout(resolve, 61000));
+          await new Promise(resolve => setTimeout(resolve, ui.telemetry_retry_ms));
           if (!fresh()) return;
           rows = await query('historical/samples', params);
         }
@@ -302,7 +304,7 @@ export function historical(parent, state, lifecycle) {
           const window = !full && !opening && driverKey === 'all' ? lapWindows.get(row.driver_number) : { start, end };
           if (!window || time < window.start || time > window.end) continue;
           const elapsed = time - window.start;
-          if (full && elapsed - (track.rows.at(-1)?.elapsed ?? -Infinity) < 1000) continue;
+          if (full && elapsed - (track.rows.at(-1)?.elapsed ?? -Infinity) < ui.replay_full_sample_ms) continue;
           track.rows.push({ ...row, elapsed });
           count += 1;
         }
@@ -341,11 +343,16 @@ export function live(parent, state, lifecycle) {
     return;
   }
   const mock = state.config.live === 'mock';
-  const dash = instrument(preferences(state.user).units, true);
+  const ui = uiOptions(state.ui);
+  const dash = instrument(preferences(state.user, ui).units, true, ui.trace_max_points);
+  const pollMs = mock ? ui.live_mock_poll_ms : ui.live_poll_ms;
+  const infoMs = mock ? ui.live_mock_info_ms : ui.live_info_ms;
+  const seconds = pollMs / 1000;
+  const pollLabel = 'OpenF1 · Updates every ' + seconds.toLocaleString() + (seconds === 1 ? ' second' : ' seconds');
   const driver = select([]);
   const mode = tag(mock ? 'SIMULATION' : 'WAITING', mock ? 'sim' : '');
   const sessionName = el('h2', {}, 'Connecting…');
-  const comment = el('small', {}, mock ? 'Synthetic test data' : 'OpenF1 · Updates every 5 seconds');
+  const comment = el('small', {}, mock ? 'Synthetic test data' : pollLabel);
   const error = labelError();
   parent.append(panel(el('div', { className: 'row spread' }, sessionName, mode),
     el('div', { className: 'form-grid' }, field('Driver', driver)), comment, error),
@@ -364,7 +371,7 @@ export function live(parent, state, lifecycle) {
     clearTimeout(timeout);
     running = true;
     try {
-      if (Date.now() - lastInfo >= (mock ? 120_000 : 30_000)) {
+      if (Date.now() - lastInfo >= infoMs) {
         const info = await request('live/info');
         if (!lifecycle.active()) return;
         lastInfo = Date.now();
@@ -386,7 +393,7 @@ export function live(parent, state, lifecycle) {
       if (!mock) {
         mode.textContent = rows.length ? 'LIVE DATA' : 'WAITING';
         mode.className = 'tag' + (rows.length ? ' good' : '');
-        comment.textContent = rows.length ? 'OpenF1 · Updates every 5 seconds' : 'Waiting for fresh samples from OpenF1.';
+        comment.textContent = rows.length ? pollLabel : 'Waiting for fresh samples from OpenF1.';
       }
       error.textContent = '';
       failed = false;
@@ -403,7 +410,7 @@ export function live(parent, state, lifecycle) {
       }
     } finally {
       running = false;
-      if (lifecycle.active()) timeout = setTimeout(poll, refresh ? 0 : failed ? 15_000 : mock ? 1000 : 5000);
+      if (lifecycle.active()) timeout = setTimeout(poll, refresh ? 0 : failed ? ui.live_error_poll_ms : pollMs);
       refresh = false;
     }
   }

@@ -1,9 +1,9 @@
 import { HttpError } from './storage.mjs';
+import { runtimeDefaults } from './runtime-limits.mjs';
 import { setTimeout as delay } from 'node:timers/promises';
 
 const origin = 'https://api.openf1.org';
 const minute = 60_000;
-const maxResponseBytes = 4 * 1024 * 1024;
 
 export function integer(value, min, max, label) {
   const number = typeof value === 'string' && /^\d+$/.test(value) ? Number(value) : value;
@@ -42,10 +42,11 @@ function quota(perSecond, perMinute) {
   };
 }
 
-async function upstream(fetcher, path, options) {
+async function upstream(fetcher, path, options, { openf1_timeout_ms, openf1_max_response_mib }) {
+  const maxResponseBytes = openf1_max_response_mib * 1024 * 1024;
   let response;
   try {
-    response = await fetcher(origin + path, { ...options, redirect: 'error', signal: AbortSignal.timeout(12_000) });
+    response = await fetcher(origin + path, { ...options, redirect: 'error', signal: AbortSignal.timeout(openf1_timeout_ms) });
   } catch {
     throw new HttpError(502, 'OpenF1 is unreachable. Check server connectivity and try again.');
   }
@@ -71,9 +72,9 @@ async function upstream(fetcher, path, options) {
   }
 }
 
-export function telemetry({ account, fetcher = fetch }) {
-  const freeQuota = quota(3, 30);
-  const liveQuota = quota(6, 60);
+export function telemetry({ account, fetcher = fetch, limits = runtimeDefaults }) {
+  const freeQuota = quota(limits.openf1_archive_requests_per_second, limits.openf1_archive_requests_per_minute);
+  const liveQuota = quota(limits.openf1_live_requests_per_second, limits.openf1_live_requests_per_minute);
   const cache = new Map();
   let token;
   let tokenUntil = 0;
@@ -88,7 +89,7 @@ export function telemetry({ account, fetcher = fetch }) {
           method: 'POST',
           headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
           body: new URLSearchParams(account)
-        });
+        }, limits);
       }).then(data => {
         if (typeof data.access_token !== 'string' || !data.access_token) {
           throw new HttpError(502, 'OpenF1 did not issue a usable token.');
@@ -106,7 +107,7 @@ export function telemetry({ account, fetcher = fetch }) {
     const id = (live ? 'live:' : 'free:') + key;
     const current = cache.get(id);
     if (current && current.until > Date.now()) return current.value;
-    const entry = { until: Date.now() + Math.max(ttl, 15_000) };
+    const entry = { until: Date.now() + Math.max(ttl, 15_000, limits.openf1_timeout_ms + 2500) };
     entry.value = Promise.resolve().then(async () => {
       const headers = { Accept: 'application/json' };
       if (live) {
@@ -114,7 +115,7 @@ export function telemetry({ account, fetcher = fetch }) {
         headers.Authorization = 'Bearer ' + await accessToken();
       }
       await (live ? liveQuota : freeQuota)();
-      const rows = await upstream(fetcher, '/v1/' + path, { headers });
+      const rows = await upstream(fetcher, '/v1/' + path, { headers }, limits);
       if (!Array.isArray(rows) || rows.some(row => !row || typeof row !== 'object')) {
         throw new HttpError(502, 'Unexpected OpenF1 response format.');
       }
@@ -124,7 +125,7 @@ export function telemetry({ account, fetcher = fetch }) {
       if (cache.get(id) === entry) cache.delete(id);
       throw error;
     });
-    if (cache.size >= 64) cache.delete(cache.keys().next().value);
+    if (cache.size >= limits.openf1_cache_entries) cache.delete(cache.keys().next().value);
     cache.set(id, entry);
     return entry.value;
   }
@@ -144,29 +145,31 @@ export function telemetry({ account, fetcher = fetch }) {
     const maxYear = new Date().getUTCFullYear();
     if (action === 'sessions') {
       const year = integer(query.get('year'), 2023, maxYear, 'season');
-      const rows = await load('sessions?year=' + year, false, 300_000);
+      const rows = await load('sessions?year=' + year, false, limits.openf1_archive_catalog_cache_ms);
       return rows.filter(row => Date.parse(row.date_end) < Date.now() - 30 * minute)
         .map(row => fields(row, sessionFields)).reverse();
     }
     const session = integer(query.get('session'), 1, 999999, 'session');
     if (action === 'drivers') {
-      const rows = await load('drivers?session_key=' + session, false, 300_000);
+      const rows = await load('drivers?session_key=' + session, false, limits.openf1_archive_catalog_cache_ms);
       return rows.map(row => fields(row, driverFields));
     }
     const driver = query.get('driver') === 'all' ? 'all' : integer(query.get('driver'), 1, 999, 'driver');
     if (action === 'laps') {
       const rows = await load('laps?session_key=' + session +
-        (driver === 'all' ? '' : '&driver_number=' + driver), false, 300_000);
+        (driver === 'all' ? '' : '&driver_number=' + driver), false, limits.openf1_archive_catalog_cache_ms);
       return rows.map(row => fields(row, lapFields)).sort((a, b) => a.lap_number - b.lap_number);
     }
     if (action === 'samples') {
       const start = timestamp(query.get('start'));
       const end = timestamp(query.get('end'));
-      const maxWindow = driver === 'all' ? 120_000 : 300_000;
+      const maxWindow = driver === 'all' ? limits.historical_all_window_ms : limits.historical_window_ms;
       if (end <= start || end - start > maxWindow || end > Date.now() - 30 * minute) {
-        throw new HttpError(400, 'Choose a historical window of up to ' + maxWindow / minute + ' minutes.');
+        const minutes = maxWindow / minute;
+        const duration = Number.isInteger(minutes) ? minutes + ' minutes' : maxWindow / 1000 + ' seconds';
+        throw new HttpError(400, 'Choose a historical window of up to ' + duration + '.');
       }
-      return samples(await load(carPath(session, driver, start, end), false, 600_000));
+      return samples(await load(carPath(session, driver, start, end), false, limits.openf1_archive_samples_cache_ms));
     }
     throw new HttpError(404, 'Unknown historical endpoint.');
   }
@@ -191,7 +194,7 @@ export function telemetry({ account, fetcher = fetch }) {
         };
       }) };
     }
-    const rows = await load('sessions?session_key=latest', true, 30_000);
+    const rows = await load('sessions?session_key=latest', true, limits.openf1_live_session_cache_ms);
     const latest = rows.at(-1);
     const start = Date.parse(latest?.date_start);
     const end = Date.parse(latest?.date_end);
@@ -201,12 +204,14 @@ export function telemetry({ account, fetcher = fetch }) {
     if (!inWindow) return { mode, session: null, drivers: [], samples: [] };
     const session = integer(latest.session_key, 1, 999999, 'session');
     if (action === 'info') {
-      const drivers = await load('drivers?session_key=' + session, true, 60_000);
+      const drivers = await load('drivers?session_key=' + session, true, limits.openf1_live_drivers_cache_ms);
       return { mode, session: fields(latest, sessionFields), drivers: drivers.map(row => fields(row, driverFields)) };
     }
     const driver = integer(query.get('driver'), 1, 999, 'driver');
-    const values = samples(await load(carPath(session, driver, current - 30_000, current), true, 5000, session + ':' + driver));
-    return { mode, samples: values.filter(row => Date.parse(row.date) >= Date.now() - 35_000) };
+    const path = carPath(session, driver, current - limits.openf1_live_sample_window_ms, current);
+    const values = samples(await load(path, true, limits.openf1_live_samples_cache_ms, session + ':' + driver));
+    const cutoff = Date.now() - limits.openf1_live_sample_max_age_ms;
+    return { mode, samples: values.filter(row => Date.parse(row.date) >= cutoff) };
   }
 
   return { historical, live };

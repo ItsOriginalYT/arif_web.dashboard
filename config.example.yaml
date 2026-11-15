@@ -1,0 +1,94 @@
+# Copy to config.yaml. Paths are relative to the file; single quotes preserve Windows backslashes.
+# The values shown are the app's existing defaults.
+server:
+  transport: local          # local, tls, proxy; the LAN launcher manages transport separately
+  host: 127.0.0.1
+  port: 8765
+  data_directory: data
+  # public_origin: 'https://adam-server-1:8765'  # required for tls or proxy
+  # tls_cert: 'C:\Dashboard-TLS\fullchain.pem'
+  # tls_key: 'C:\Dashboard-TLS\privkey.pem'
+
+lan:
+  address: 192.168.100.63
+  port: 8765
+  backend_port: 8766
+  # caddy_path: 'C:\Tools\caddy.exe'       # otherwise beside the launcher or on PATH
+  # caddy_data_directory: 'C:\Arif-WebDashboard\caddy-data'   # otherwise under LOCALAPPDATA
+
+# Uncomment only the settings you want the file to apply. Leaving them commented
+# preserves the active configuration on an existing install.
+dashboard:
+  # title: Arif WebDashboard
+  # historical: true
+  # live: mock                           # mock, openf1, or off
+  # chat: true
+  # max_file_mib: 8                      # 1 to 16
+  # test_seconds: 15                     # 1 to 120
+  # historical_transport: inherit       # inherit or https
+  # live_transport: inherit
+  # chat_transport: inherit
+
+openf1:
+  # Environment variable names only. Put credentials in the environment or .env.
+  username_env: OPENF1_USERNAME
+  password_env: OPENF1_PASSWORD
+
+ui:
+  # Defaults for accounts that haven't saved their own preferences.
+  default_theme: dark
+  default_speed_units: kmh
+  default_playback_speed: 1
+  default_chat_sound: false
+  settings_poll_ms: 2500
+  chat_poll_ms: 2400
+  chat_contacts_poll_count: 5
+  live_mock_poll_ms: 1000
+  live_poll_ms: 5000
+  live_error_poll_ms: 15000
+  live_mock_info_ms: 120000
+  live_info_ms: 30000
+  debug_poll_ms: 4000
+  trace_max_points: 1500
+  sample_hold_ms: 5000
+  replay_full_sample_ms: 1000
+  telemetry_retry_ms: 61000
+
+limits:
+  request_timeout_ms: 25000
+  headers_timeout_ms: 10000
+  socket_timeout_ms: 30000
+  max_connections: 128
+  json_body_bytes: 16384
+  max_pending_uploads: 6
+  chat_storage_mib: 128
+  chat_message_chars: 4000
+  chat_page_size: 80
+  chat_messages_per_minute: 45
+  user_requests_per_minute: 240
+  login_requests_per_ip_per_minute: 20
+  login_requests_per_username_per_minute: 10
+  password_changes_per_minute: 10
+  session_minutes: 720
+  password_min_length: 1
+  lifecycle_confirmation_seconds: 60
+  debug_request_entries: 40
+  audit_entries: 100
+  config_history_entries: 50
+  config_confirmation_seconds: 60
+  historical_window_ms: 300000
+  historical_all_window_ms: 120000
+  openf1_timeout_ms: 12000
+  openf1_max_response_mib: 4
+  openf1_cache_entries: 64
+  openf1_archive_catalog_cache_ms: 300000
+  openf1_archive_samples_cache_ms: 600000
+  openf1_live_session_cache_ms: 30000
+  openf1_live_drivers_cache_ms: 60000
+  openf1_live_samples_cache_ms: 5000
+  openf1_live_sample_window_ms: 30000
+  openf1_live_sample_max_age_ms: 35000
+  openf1_archive_requests_per_second: 3
+  openf1_archive_requests_per_minute: 30
+  openf1_live_requests_per_second: 6
+  openf1_live_requests_per_minute: 60

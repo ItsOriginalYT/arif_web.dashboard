@@ -75,7 +75,40 @@ export function table(headers, rows) {
     el('tbody', {}, rows.map(cells => el('tr', {}, cells.map(cell => el('td', {}, cell)))))));
 }
 
-export const preferences = user => ({ theme: 'dark', units: 'kmh', playbackSpeed: 1, chatSound: false, ...user.prefs });
+export const uiDefaults = Object.freeze({
+  default_theme: 'dark',
+  default_speed_units: 'kmh',
+  default_playback_speed: 1,
+  default_chat_sound: false,
+  settings_poll_ms: 2500,
+  chat_poll_ms: 2400,
+  chat_contacts_poll_count: 5,
+  live_mock_poll_ms: 1000,
+  live_poll_ms: 5000,
+  live_error_poll_ms: 15000,
+  live_mock_info_ms: 120000,
+  live_info_ms: 30000,
+  debug_poll_ms: 4000,
+  trace_max_points: 1500,
+  sample_hold_ms: 5000,
+  replay_full_sample_ms: 1000,
+  telemetry_retry_ms: 61000
+});
+
+export const uiOptions = values => ({ ...uiDefaults, ...values });
+
+export function preferences(user, ui) {
+  const defaults = uiOptions(ui);
+  return { theme: defaults.default_theme, units: defaults.default_speed_units,
+    playbackSpeed: defaults.default_playback_speed, chatSound: defaults.default_chat_sound, ...user.prefs };
+}
+
+export function validatePasswordLength(value, limits) {
+  const minimum = limits?.password_min_length ?? 1;
+  if ([...value].length < minimum) {
+    throw new Error('Use at least ' + minimum + (minimum === 1 ? ' character' : ' characters') + ' for the password.');
+  }
+}
 
 export function serviceProblem(state, service) {
   if (!state.config[service] || state.config[service] === 'off') return 'This service is disabled.';

@@ -200,6 +200,26 @@ test('console lifecycle confirmation and debug are scoped to the administrator s
   assert.deepEqual(operations, ['restart']);
 });
 
+test('configured session, password, chat and UI settings are used by the app', async t => {
+  const app = await instance(t, { limits: { password_min_length: 8, session_minutes: 30,
+    chat_message_chars: 4, chat_page_size: 1 }, ui: { default_theme: 'light' } });
+  const admin = client(app);
+  await ok(admin, 'login', { username: 'Administrator', password: initial });
+  assert.equal((await admin.call('password', { current: initial, password: 'a' })).status, 400);
+  await ok(admin, 'password', { current: initial, password: finished });
+  const expiration = app.store.get('SELECT expires FROM sessions').expires;
+  assert.ok(expiration - Date.now() > 29 * 60_000 && expiration - Date.now() <= 30 * 60_000);
+  const settings = await ok(admin, 'settings');
+  assert.equal(settings.ui.default_theme, 'light');
+  assert.equal(settings.limits.password_min_length, 8);
+  const member = await ok(admin, 'admin/users', { username: 'receiver', password: temporary });
+  const chat = 'chat/with/' + member.id;
+  assert.equal((await admin.call(chat, { message: 'longer' })).status, 400);
+  await ok(admin, chat, { message: 'one' });
+  await ok(admin, chat, { message: 'two' });
+  assert.deepEqual((await ok(admin, chat)).map(message => message.body), ['two']);
+});
+
 test('direct messages, authenticated downloads, limits and account deletion', async t => {
   const app = await instance(t);
   const admin = client(app);

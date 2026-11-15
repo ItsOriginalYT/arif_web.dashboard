@@ -1,4 +1,4 @@
-import { button, check, date, el, field, labelError, line, notice, panel, request, select, submit, table, tag, task, title } from './ui.js';
+import { button, check, date, el, field, labelError, line, notice, panel, request, select, submit, table, tag, task, title, uiDefaults, validatePasswordLength } from './ui.js';
 
 function dialog(host, heading, message, action) {
   return new Promise(resolve => {
@@ -79,7 +79,7 @@ export function admin(parent, state, lifecycle, controller) {
     const monitor = setInterval(() => {
       if (!live()) clearInterval(monitor);
       else if (!debug.hidden) refreshDebug().catch(() => {});
-    }, 4000);
+    }, state.ui?.debug_poll_ms ?? uiDefaults.debug_poll_ms);
     lifecycle.cleanup(() => clearInterval(monitor));
     refreshDebug().catch(() => {});
     let cursor = history.length;
@@ -176,7 +176,10 @@ export function admin(parent, state, lifecycle, controller) {
         task(save, error, async () => {
           const data = { action: 'edit', username: name.value, display: display.value.trim() || name.value,
             role: role.value, disabled: disabled.checked };
-          if (secret.value) data.password = secret.value;
+          if (secret.value) {
+            validatePasswordLength(secret.value, state.limits);
+            data.password = secret.value;
+          }
           await request('admin/users' + (user ? '/' + user.id : ''), data);
           secret.value = '';
           if (own) await controller.account();

@@ -7,7 +7,8 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { accounts } from './accounts.mjs';
 import { configuration, validateFileSettings } from './config.mjs';
-import { readSettings } from './settings-file.mjs';
+import { migrateSettings, readSettings } from './settings-file.mjs';
+import { resolveRuntimeLimits } from './runtime-limits.mjs';
 import { bootstrap, HttpError, json, now, openStore, parse } from './storage.mjs';
 import { integer, telemetry } from './telemetry.mjs';
 
@@ -44,6 +45,7 @@ function debugPath(path) {
 
 export function environment(env = process.env, file = readSettings(env)) {
   const { server, dashboard, openf1 } = file;
+  const limits = resolveRuntimeLimits(file.limits);
   const mode = env.ADAM_TRANSPORT ?? server.transport ?? 'local';
   const host = env.ADAM_HOST ?? server.host ?? '127.0.0.1';
   const port = integer(env.ADAM_PORT ?? server.port ?? 8765, 1, 65535, 'port');
@@ -66,7 +68,7 @@ export function environment(env = process.env, file = readSettings(env)) {
     minVersion: 'TLSv1.2'
   } : undefined;
   return { mode, host, port, publicOrigin, account, tls, dashboard: validateFileSettings(dashboard, Boolean(account)),
-    directory: resolve(env.ADAM_DATA ?? server.data_directory ?? 'data') };
+    directory: resolve(env.ADAM_DATA ?? server.data_directory ?? 'data'), limits, ui: file.ui };
 }
 
 function limiter() {
@@ -98,11 +100,11 @@ async function readBody(request, max) {
   return Buffer.concat(chunks, size);
 }
 
-async function readJson(request) {
+async function readJson(request, maxBytes) {
   if (!/^application\/json(?:;|$)/i.test(request.headers['content-type'] ?? '')) {
     throw new HttpError(415, 'Use application/json for this request.');
   }
-  const raw = await readBody(request, 16384);
+  const raw = await readBody(request, maxBytes);
   try {
     const body = parse(raw.toString('utf8'));
     if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error();
@@ -153,7 +155,7 @@ function download(response, store, id, user) {
   response.end(item.attachment);
 }
 
-function chat(store, request, response, url, context, config, authorize, limit) {
+function chat(store, request, response, url, context, config, authorize, limit, limits) {
   const user = context.user;
   const { all, get, run, tx } = store;
   const { pathname: path, searchParams } = url;
@@ -181,12 +183,12 @@ function chat(store, request, response, url, context, config, authorize, limit) 
     const cursor = searchParams.get('before');
     const before = cursor === null ? Number.MAX_SAFE_INTEGER : integer(cursor, 1, Number.MAX_SAFE_INTEGER, 'message cursor');
     return all('SELECT id,sender,recipient,sent,body,filename FROM messages ' +
-      'WHERE id<? AND ((sender=? AND recipient=?) OR (sender=? AND recipient=?)) ORDER BY id DESC LIMIT 80',
-      before, user.id, other, other, user.id).reverse();
+      'WHERE id<? AND ((sender=? AND recipient=?) OR (sender=? AND recipient=?)) ORDER BY id DESC LIMIT ?',
+      before, user.id, other, other, user.id, limits.chat_page_size).reverse();
   }
   if (method !== 'POST') throw new HttpError(405, 'Method not allowed.');
   if (peer.disabled) throw new HttpError(409, 'This contact is disabled.');
-  limit('chat:' + user.id, 45, 60_000);
+  limit('chat:' + user.id, limits.chat_messages_per_minute, 60_000);
   const save = (body, name = null, bytes = null) => tx(() => {
     const latest = authorize();
     if (latest.user.id !== user.id) throw new HttpError(403, 'Sign in again.');
@@ -194,7 +196,9 @@ function chat(store, request, response, url, context, config, authorize, limit) 
     if (!get('SELECT id FROM users WHERE id=? AND disabled=0', other)) throw new HttpError(409, 'This contact is unavailable.');
     if (bytes) {
       const used = get('SELECT COALESCE(SUM(length(attachment)),0) AS size FROM messages WHERE sender=? AND attachment IS NOT NULL', user.id).size;
-      if (used + bytes.length > 128 * MiB) throw new HttpError(413, 'Your total attachment storage limit is 128 MiB.');
+      if (used + bytes.length > limits.chat_storage_mib * MiB) {
+        throw new HttpError(413, 'Your total attachment storage limit is ' + limits.chat_storage_mib + ' MiB.');
+      }
     }
     const record = run('INSERT INTO messages(sender,recipient,sent,body,filename,attachment) VALUES(?,?,?,?,?,?)',
       user.id, other, now(), body, name, bytes);
@@ -214,19 +218,20 @@ function chat(store, request, response, url, context, config, authorize, limit) 
       return save('', name, bytes);
     });
   }
-  return readJson(request).then(({ message }) => {
-    if (typeof message !== 'string' || !message.trim() || message.length > 4000) {
-      throw new HttpError(400, 'Enter a message of 1–4,000 characters.');
+  return readJson(request, limits.json_body_bytes).then(({ message }) => {
+    if (typeof message !== 'string' || !message.trim() || message.length > limits.chat_message_chars) {
+      throw new HttpError(400, 'Enter a message of 1–' + limits.chat_message_chars.toLocaleString('en-US') + ' characters.');
     }
     return save(message.trim());
   });
 }
 
 export function createDashboard(options, fetcher = fetch) {
+  const limits = resolveRuntimeLimits(options.limits);
   const store = openStore(options.directory);
-  const config = configuration(store, Boolean(options.account), options.dashboard);
-  const auth = accounts(store);
-  const provider = telemetry({ account: options.account, fetcher });
+  const config = configuration(store, Boolean(options.account), options.dashboard, limits);
+  const auth = accounts(store, limits);
+  const provider = telemetry({ account: options.account, fetcher, limits });
   const rate = limiter();
   let pendingUploads = 0;
   let shuttingDown = false;
@@ -259,8 +264,8 @@ export function createDashboard(options, fetcher = fetch) {
         for (const [session, pending] of pendingLifecycle) {
           if (pending.until <= time) pendingLifecycle.delete(session);
         }
-        pendingLifecycle.set(context.session, { action: a, until: time + 60000 });
-        return { output: 'Enter ' + a + ' confirm within 60 seconds to continue.' };
+        pendingLifecycle.set(context.session, { action: a, until: time + limits.lifecycle_confirmation_seconds * 1000 });
+        return { output: 'Enter ' + a + ' confirm within ' + limits.lifecycle_confirmation_seconds + ' seconds to continue.' };
       }
       const pending = pendingLifecycle.get(context.session);
       if (words.length !== 2 || b !== 'confirm' || pending?.action !== a || pending.until <= time) {
@@ -281,7 +286,7 @@ export function createDashboard(options, fetcher = fetch) {
       }
       if (debugOn.includes(b)) {
         for (const session of debugSessions.keys()) debugState(session);
-        debugSessions.set(context.session, { until: Date.now() + 12 * 3600000, requests: [] });
+        debugSessions.set(context.session, { until: Date.now() + limits.session_minutes * 60000, requests: [] });
       } else if (debugOff.includes(b)) {
         debugSessions.delete(context.session);
       }
@@ -337,10 +342,10 @@ export function createDashboard(options, fetcher = fetch) {
       const ip = secure && options.mode === 'proxy' ? (request.headers['x-forwarded-for'] ?? 'proxy').split(',')[0].trim()
         : request.socket.remoteAddress;
       if (method === 'POST' && path === '/api/login') {
-        rate('auth-ip:' + ip, 20, 60_000);
-        const credentials = await readJson(request);
+        rate('auth-ip:' + ip, limits.login_requests_per_ip_per_minute, 60_000);
+        const credentials = await readJson(request, limits.json_body_bytes);
         const name = typeof credentials.username === 'string' ? credentials.username.slice(0, 32).toLowerCase() : '';
-        rate('auth-name:' + name, 10, 60_000);
+        rate('auth-name:' + name, limits.login_requests_per_username_per_minute, 60_000);
         return send(response, await auth.login(credentials, response, secure));
       }
       const requireUser = (admin = false, changing = false) => {
@@ -351,7 +356,8 @@ export function createDashboard(options, fetcher = fetch) {
         return context;
       };
       if (method === 'GET' && path === '/api/session') {
-        return send(response, { user: auth.context(request)?.user ?? null, secure, transport: options.mode });
+        return send(response, { user: auth.context(request)?.user ?? null, secure, transport: options.mode,
+          limits: { password_min_length: limits.password_min_length } });
       }
       if (method === 'POST' && path === '/api/logout') {
         const context = requireUser(false, true);
@@ -359,9 +365,9 @@ export function createDashboard(options, fetcher = fetch) {
         return send(response, { signedOut: true });
       }
       if (method === 'POST' && path === '/api/password') {
-        const body = await readJson(request);
+        const body = await readJson(request, limits.json_body_bytes);
         const { user } = requireUser(false, true);
-        rate('change:' + user.id, 10, 60_000);
+        rate('change:' + user.id, limits.password_changes_per_minute, 60_000);
         return send(response, await auth.changePassword(user, body, response, secure, () => requireUser(false, true)));
       }
       const context = requireUser();
@@ -370,10 +376,10 @@ export function createDashboard(options, fetcher = fetch) {
         const started = Date.now();
         response.once('finish', () => {
           debug.requests.push({ method, path: debugPath(path), status: response.statusCode, ms: Date.now() - started });
-          if (debug.requests.length > 40) debug.requests.shift();
+          if (debug.requests.length > limits.debug_request_entries) debug.requests.shift();
         });
       }
-      rate('user:' + context.user.id, 240, 60_000);
+      rate('user:' + context.user.id, limits.user_requests_per_minute, 60_000);
       const serviceConfig = service => {
         const current = requireUser();
         const effective = config.effective(current.session).config;
@@ -383,9 +389,13 @@ export function createDashboard(options, fetcher = fetch) {
         }
         return { ...current, config: effective };
       };
-      if (method === 'GET' && path === '/api/settings') return send(response, config.effective(context.session));
+      if (method === 'GET' && path === '/api/settings') {
+        const { chat_message_chars, chat_page_size, historical_window_ms, historical_all_window_ms, password_min_length } = limits;
+        return send(response, { ...config.effective(context.session), ui: options.ui ?? {},
+          limits: { chat_message_chars, chat_page_size, historical_window_ms, historical_all_window_ms, password_min_length } });
+      }
       if (method === 'POST' && path === '/api/preferences') {
-        const data = await readJson(request);
+        const data = await readJson(request, limits.json_body_bytes);
         return send(response, auth.preferences(requireUser().user, data));
       }
       const dataRoute = endpoint.exec(path);
@@ -400,10 +410,10 @@ export function createDashboard(options, fetcher = fetch) {
       if (path.startsWith('/api/chat/')) {
         const current = serviceConfig('chat');
         const upload = method === 'POST' && path.endsWith('/file');
-        if (upload && pendingUploads >= 6) throw new HttpError(429, 'Uploads are busy. Try again shortly.');
+        if (upload && pendingUploads >= limits.max_pending_uploads) throw new HttpError(429, 'Uploads are busy. Try again shortly.');
         if (upload) pendingUploads += 1;
         try {
-          const result = await chat(store, request, response, url, context, current.config, () => serviceConfig('chat'), rate);
+          const result = await chat(store, request, response, url, context, current.config, () => serviceConfig('chat'), rate, limits);
           return response.writableEnded ? undefined : send(response, result);
         } finally {
           if (upload) pendingUploads -= 1;
@@ -411,7 +421,7 @@ export function createDashboard(options, fetcher = fetch) {
       }
       if (path.startsWith('/api/admin/')) {
         requireUser(true);
-        const body = method === 'POST' ? await readJson(request) : null;
+        const body = method === 'POST' ? await readJson(request, limits.json_body_bytes) : null;
         const admin = () => requireUser(true);
         const current = admin();
         const userRoute = userPath.exec(path);
@@ -424,7 +434,7 @@ export function createDashboard(options, fetcher = fetch) {
         }
         if (method === 'GET' && path === '/api/admin/system') return send(response, system());
         if (method === 'GET' && path === '/api/admin/audit') {
-          return send(response, store.all('SELECT id,at,actor,action,detail FROM audit ORDER BY id DESC LIMIT 100')
+          return send(response, store.all('SELECT id,at,actor,action,detail FROM audit ORDER BY id DESC LIMIT ?', limits.audit_entries)
             .map(row => ({ ...row, detail: parse(row.detail) })));
         }
         if (method === 'GET' && path === '/api/admin/config') return send(response, config.inspect(current.session));
@@ -464,15 +474,19 @@ export function createDashboard(options, fetcher = fetch) {
   }
 
   const server = options.mode === 'tls' ? https(options.tls, handle) : http(handle);
-  server.requestTimeout = 25_000;
-  server.headersTimeout = 10_000;
-  server.setTimeout(30_000);
-  server.maxConnections = 128;
+  server.requestTimeout = limits.request_timeout_ms;
+  server.headersTimeout = limits.headers_timeout_ms;
+  server.setTimeout(limits.socket_timeout_ms);
+  server.maxConnections = limits.max_connections;
   server.on('close', () => store.db.close());
   return { server, store };
 }
 
 async function main() {
+  if (process.argv[2] === 'migrate-config') {
+    console.log('Created ' + migrateSettings() + '.');
+    return;
+  }
   if (process.argv[2] === 'lan-settings') {
     const { lan } = readSettings();
     console.log(json(lan));
@@ -506,7 +520,7 @@ async function main() {
     const input = Buffer.concat(chunks);
     const store = openStore(options.directory);
     try {
-      await bootstrap(store, input.toString('utf8').replace(/\r?\n$/, ''));
+      await bootstrap(store, input.toString('utf8').replace(/\r?\n$/, ''), options.limits.password_min_length);
       console.log('Administrator created. First login requires a password change.');
     } finally {
       input.fill(0);

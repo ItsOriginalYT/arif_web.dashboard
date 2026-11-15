@@ -1,13 +1,14 @@
 import { digest, HttpError, json, now, parse, password, passwordHash, secret, username, verify } from './storage.mjs';
+import { runtimeDefaults } from './runtime-limits.mjs';
 
-const sessionLifetime = 12 * 60 * 60 * 1000;
 const sameSite = '; HttpOnly; SameSite=Strict; Path=/';
 const accountFields = 'id,username,display,role,change_required,disabled,created,updated,prefs';
 
-export function accounts(store) {
+export function accounts(store, limits = runtimeDefaults) {
   const { all, get, run, audit, tx } = store;
   const byId = id => get('SELECT ' + accountFields + ' FROM users WHERE id=?', id);
   const view = user => ({ ...user, prefs: parse(user.prefs) });
+  const sessionLifetime = limits.session_minutes * 60000;
 
   function newSession(userId, secure, response) {
     const token = secret();
@@ -47,7 +48,7 @@ export function accounts(store) {
 
   async function changePassword(user, body, response, secure, assertCurrent) {
     const oldPassword = password(body.current);
-    const nextPassword = password(body.password);
+    const nextPassword = password(body.password, limits.password_min_length);
     if (oldPassword === nextPassword) throw new HttpError(400, 'Choose a different password.');
     const old = get('SELECT hash FROM users WHERE id=?', user.id);
     if (!old || !await verify(oldPassword, old.hash)) throw new HttpError(403, 'The current password is incorrect.');
@@ -103,7 +104,9 @@ export function accounts(store) {
     if (id === actor.id && (data.disabled || data.role !== 'admin' || body.password !== undefined)) {
       throw new HttpError(400, 'Use your account settings to change your password. Your own admin access must remain enabled.');
     }
-    const hash = operation === 'create' || body.password !== undefined ? await passwordHash(password(body.password)) : null;
+    const hash = operation === 'create' || body.password !== undefined
+      ? await passwordHash(password(body.password, limits.password_min_length))
+      : null;
     return tx(() => {
       assertAdmin();
       const collision = get('SELECT id FROM users WHERE username=? COLLATE NOCASE', data.name);

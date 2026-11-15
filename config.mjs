@@ -1,4 +1,5 @@
 import { HttpError, json, now, parse, secret } from './storage.mjs';
+import { runtimeDefaults } from './runtime-limits.mjs';
 
 export const factory = Object.freeze({
   title: 'Arif WebDashboard',
@@ -38,7 +39,7 @@ export function validateFileSettings(settings, providerReady) {
   return Object.fromEntries(Object.keys(settings).map(key => [key, normalized[key]]));
 }
 
-export function configuration(store, providerReady, fileSettings = {}) {
+export function configuration(store, providerReady, fileSettings = {}, limits = runtimeDefaults) {
   const { all, get, run, tx, audit } = store;
   const file = validateFileSettings(fileSettings, providerReady);
   const state = () => get('SELECT c.*, v.body AS current, v.parent FROM config c JOIN versions v ON c.active=v.id');
@@ -83,7 +84,7 @@ export function configuration(store, providerReady, fileSettings = {}) {
     return {
       ...effective(session), draft: parse(row.draft), defaults: parse(row.defaults),
       revision: row.revision, active: row.active, parent: row.parent, providerReady,
-      versions: all('SELECT id,parent,at,author FROM versions ORDER BY id DESC LIMIT 50'),
+      versions: all('SELECT id,parent,at,author FROM versions ORDER BY id DESC LIMIT ?', limits.config_history_entries),
       profiles: all('SELECT name,at,author FROM profiles ORDER BY name')
     };
   }
@@ -94,7 +95,7 @@ export function configuration(store, providerReady, fileSettings = {}) {
       if (pending.until <= time) confirmations.delete(key);
     }
     if (body.step === 'start') {
-      const pending = { token: secret(), op, revision, step: 1, until: time + 60000 };
+      const pending = { token: secret(), op, revision, step: 1, until: time + limits.config_confirmation_seconds * 1000 };
       confirmations.set(session, pending);
       return { confirmation: pending.token, step: 1 };
     }

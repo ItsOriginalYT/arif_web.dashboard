@@ -1,4 +1,4 @@
-import { button, date, el, labelError, line, panel, preferences, query, request, serviceProblem, submit, task, title } from './ui.js';
+import { button, date, el, labelError, line, panel, preferences, query, request, serviceProblem, submit, task, title, uiOptions } from './ui.js';
 
 export function chat(parent, state, lifecycle) {
   parent.append(title('Private chat', 'Send messages and files to other accounts on this server.'));
@@ -7,10 +7,13 @@ export function chat(parent, state, lifecycle) {
     parent.append(panel(el('p', { className: 'notice' }, disabled)));
     return;
   }
+  const ui = uiOptions(state.ui);
+  const pageSize = state.limits?.chat_page_size ?? 80;
   const contactsNode = el('ul', {});
   const chatTitle = el('h2', {}, 'Choose a contact');
   const messages = el('div', { className: 'conversation', role: 'region', 'aria-label': 'Conversation', tabIndex: 0 });
-  const body = el('textarea', { ariaLabel: 'Message', rows: 1, maxLength: 4000, required: true, placeholder: 'Write a message' });
+  const body = el('textarea', { ariaLabel: 'Message', rows: 1, maxLength: state.limits?.chat_message_chars ?? 4000,
+    required: true, placeholder: 'Write a message' });
   const send = submit('Send');
   const input = el('input', { className: 'file-input', type: 'file', ariaLabel: 'Attachment' });
   const attach = button('Send file', upload);
@@ -43,7 +46,7 @@ export function chat(parent, state, lifecycle) {
     tone.start();
     tone.stop(audio.currentTime + 0.2);
   }
-  if (preferences(state.user).chatSound && window.AudioContext) {
+  if (preferences(state.user, ui).chatSound && window.AudioContext) {
     parent.addEventListener('pointerdown', () => {
       audio = new AudioContext();
       audio.resume().catch(() => {});
@@ -100,7 +103,7 @@ export function chat(parent, state, lifecycle) {
     refreshing = true;
     const run = sequence;
     try {
-      if (ticks++ % 5 === 0) {
+      if (ticks++ % ui.chat_contacts_poll_count === 0) {
         const list = await request('chat/contacts');
         if (!lifecycle.active()) return;
         if (JSON.stringify(list) !== JSON.stringify(peers)) {
@@ -122,7 +125,7 @@ export function chat(parent, state, lifecycle) {
       if (!lifecycle.active() || run !== sequence) return;
       if (!loadedHistory || (rows.at(-1)?.id ?? 0) !== idOfLast()) {
         if (loadedHistory && rows.some(row => row.id > idOfLast() && row.sender !== state.user.id)) ping();
-        if (!loadedHistory) hasOlder = rows.length === 80;
+        if (!loadedHistory) hasOlder = rows.length === pageSize;
         combine(rows);
         renderMessages();
         loadedHistory = true;
@@ -139,7 +142,7 @@ export function chat(parent, state, lifecycle) {
       const run = sequence;
       const rows = await query('chat/with/' + selected.id, { before: shown[0].id });
       if (!lifecycle.active() || run !== sequence) return;
-      hasOlder = rows.length === 80;
+      hasOlder = rows.length === pageSize;
       combine(rows);
       renderMessages(true);
     });
@@ -176,7 +179,7 @@ export function chat(parent, state, lifecycle) {
   }
   renderContacts();
   renderMessages();
-  const timer = setInterval(refresh, 2400);
+  const timer = setInterval(refresh, ui.chat_poll_ms);
   lifecycle.cleanup(() => {
     clearInterval(timer);
     if (audio) audio.close().catch(() => {});

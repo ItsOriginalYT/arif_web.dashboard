@@ -25,8 +25,9 @@ function Get-LanSettings {
         }
         finally { Pop-Location }
     }
-    elseif (Test-Path -LiteralPath (Join-Path $ProjectDirectory 'dashboard.toml') -PathType Leaf) {
-        throw 'Update the dashboard checkout before configuring the firewall from dashboard.toml.'
+    elseif ($env:ADAM_CONFIG -or (Test-Path -LiteralPath (Join-Path $ProjectDirectory 'config.yaml') -PathType Leaf) -or
+        (Test-Path -LiteralPath (Join-Path $ProjectDirectory 'dashboard.toml') -PathType Leaf)) {
+        throw 'Update the dashboard checkout before configuring the firewall from a config file.'
     }
     if ($LanAddress) { $lan.address = $LanAddress }
     if (!(Get-NetIPAddress -AddressFamily IPv4 -IPAddress $lan.address -ErrorAction SilentlyContinue)) {
@@ -57,16 +58,6 @@ try {
         Write-Host 'Run this launcher again without -ConfigureFirewall in a normal PowerShell window.'
         return
     }
-
-    if (!$CaddyPath) {
-        $nearLauncher = Join-Path $PSScriptRoot 'caddy.exe'
-        if (Test-Path -LiteralPath $nearLauncher -PathType Leaf) { $CaddyPath = $nearLauncher }
-        else { $CaddyPath = (Get-Command caddy.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1).Source }
-    }
-    if (!$CaddyPath -or !(Test-Path -LiteralPath $CaddyPath -PathType Leaf)) {
-        throw 'Put the official Windows caddy.exe beside this launcher, or supply -CaddyPath.'
-    }
-    $CaddyPath = (Resolve-Path -LiteralPath $CaddyPath).Path
 
     $git = (Get-Command git.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1).Source
     if (!$git) { throw 'Install Git for Windows, then reopen PowerShell.' }
@@ -102,9 +93,20 @@ try {
     }
 
     $lan = Get-LanSettings
+    if (!$CaddyPath) { $CaddyPath = $lan.caddy_path }
+    if (!$CaddyPath) {
+        $nearLauncher = Join-Path $PSScriptRoot 'caddy.exe'
+        if (Test-Path -LiteralPath $nearLauncher -PathType Leaf) { $CaddyPath = $nearLauncher }
+        else { $CaddyPath = (Get-Command caddy.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1).Source }
+    }
+    if (!$CaddyPath -or !(Test-Path -LiteralPath $CaddyPath -PathType Leaf)) {
+        throw 'Put the official Windows caddy.exe beside this launcher, set lan.caddy_path, or supply -CaddyPath.'
+    }
+    $CaddyPath = (Resolve-Path -LiteralPath $CaddyPath).Path
     $origin = "https://$($lan.address):$($lan.port)"
     if ($lan.port -eq 443) { $origin = "https://$($lan.address)" }
     $caddyData = Join-Path $env:LOCALAPPDATA 'ArifWebDashboard'
+    if ($lan.caddy_data_directory) { $caddyData = $lan.caddy_data_directory }
     $launchSettings = @{
         ADAM_TRANSPORT = 'proxy'
         ADAM_HOST = '127.0.0.1'

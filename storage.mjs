@@ -28,9 +28,12 @@ export function username(value) {
   return value;
 }
 
-export function password(value) {
+export function password(value, minimumLength = 1) {
   if (typeof value !== 'string' || !value.trim() || Buffer.byteLength(value) > 256) {
     throw new HttpError(400, 'Use at least one non-whitespace character and at most 256 bytes for the password.');
+  }
+  if ([...value].length < minimumLength) {
+    throw new HttpError(400, 'Use at least ' + minimumLength + ' characters for the password.');
   }
   return value;
 }
@@ -105,8 +108,8 @@ export function openStore(directory) {
   return { db, get, all, run, tx, audit };
 }
 
-export async function bootstrap(store, initial) {
-  const hash = await passwordHash(password(initial));
+export async function bootstrap(store, initial, minimumLength = 1) {
+  const hash = await passwordHash(password(initial, minimumLength));
   store.tx(() => {
     if (store.get('SELECT id FROM users LIMIT 1')) throw new HttpError(409, 'Accounts already exist.');
     store.run('INSERT INTO users(username,display,role,hash,change_required,created,updated) VALUES(?,?,?,?,1,?,?)',

@@ -62,6 +62,7 @@ temp/
 *.tmp
 
 # Local configuration
+/config.yaml
 /dashboard.toml
 config/local.json
 config/secrets.json

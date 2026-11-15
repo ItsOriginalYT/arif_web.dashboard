@@ -3,9 +3,12 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { configuration } from '../config.mjs';
 import { environment } from '../server.mjs';
-import { readSettings } from '../settings-file.mjs';
+import { migrateSettings, readSettings } from '../settings-file.mjs';
+import { runtimeDefaults } from '../runtime-limits.mjs';
+import { uiDefaults } from '../public/ui.js';
 import { openStore } from '../storage.mjs';
 
 async function scratch(t) {
@@ -76,4 +79,45 @@ test('TOML edits create versions and unchanged values preserve later admin edits
   } finally {
     store.db.close();
   }
+});
+
+test('config.yaml overrides the legacy file and accepts YAML scalar settings', async t => {
+  const directory = await scratch(t);
+  await writeFile(join(directory, 'dashboard.toml'), '[server]\nport = 8800');
+  assert.equal(readSettings({}, directory).server.port, 8800);
+  const yaml = join(directory, 'config.yaml');
+  await writeFile(yaml, [
+    'server:', '  port: 8801', "  data_directory: 'db #1' # comment",
+    'lan:', "  caddy_path: 'Tools/caddy.exe'", '  port: 8802', '  backend_port: 8803',
+    'dashboard:', "  title: 'Adam''s garage'", '  chat: false',
+    'ui:', '  default_playback_speed: 0.5', '  default_theme: light',
+    'limits:', '  password_min_length: 8', '  chat_page_size: 15'
+  ].join('\r\n'));
+  const file = readSettings({}, directory);
+  const options = environment({}, file);
+  assert.equal(options.directory, join(directory, 'db #1'));
+  assert.equal(options.port, 8801);
+  assert.equal(file.lan.caddy_path, join(directory, 'Tools', 'caddy.exe'));
+  assert.deepEqual(file.dashboard, { title: "Adam's garage", chat: false });
+  assert.deepEqual(options.ui, { default_playback_speed: 0.5, default_theme: 'light' });
+  assert.equal(options.limits.password_min_length, 8);
+  assert.equal(options.limits.chat_page_size, 15);
+  await writeFile(yaml, 'server:\n  port: 8801\n  port: 8802');
+  assert.throws(() => readSettings({}, directory), /:3: Duplicate setting server.port/);
+  await writeFile(yaml, 'ui:\n  settings_poll_ms: false');
+  assert.throws(() => readSettings({}, directory), /Invalid value for ui.settings_poll_ms/);
+  await writeFile(yaml, 'limits:\n  headers_timeout_ms: 45000');
+  assert.throws(() => environment({}, readSettings({}, directory)), /headers_timeout_ms must not exceed/);
+});
+
+test('the YAML example matches built-in defaults and migration preserves legacy values', async t => {
+  const example = readSettings({ ADAM_CONFIG: fileURLToPath(new URL('../config.example.yaml', import.meta.url)) });
+  assert.deepEqual(example.ui, uiDefaults);
+  assert.deepEqual(example.limits, runtimeDefaults);
+  const directory = await scratch(t);
+  await writeFile(join(directory, 'dashboard.toml'), "[server]\ndata_directory = 'local data'\n[dashboard]\nlive = 'off'\nmax_file_mib = 6\n");
+  const before = readSettings({}, directory);
+  assert.equal(migrateSettings(directory), 'config.yaml');
+  assert.deepEqual(readSettings({}, directory), before);
+  assert.throws(() => migrateSettings(directory), { code: 'EEXIST' });
 });
