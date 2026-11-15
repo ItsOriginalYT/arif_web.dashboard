@@ -54,6 +54,16 @@ $env:ADAM_TLS_KEY = 'C:\Dashboard-TLS\privkey.pem'
 node server.mjs
 ~~~
 
+### LAN launcher for Windows
+
+Put the official Windows 64-bit Caddy executable named `caddy.exe` alongside [the LAN launcher](Start-ArifWebDashboard-LAN.ps1), or give the launcher its location with `-CaddyPath`. The launcher pulls GitHub's `default` branch into `I:\IntendedUseStorage\Websites\ArifWebDashboard` and starts the dashboard at `https://192.168.100.63:8765/`. Pass `-LanAddress` if ADAM-SERVER-1 has a different IPv4 address. [Caddy installation](https://caddyserver.com/docs/install#static-binaries)
+
+~~~powershell
+.\Start-ArifWebDashboard-LAN.ps1
+~~~
+
+If the firewall blocks LAN access, run `.\Start-ArifWebDashboard-LAN.ps1 -ConfigureFirewall` once in Administrator PowerShell. It allows TCP 8765 from the local subnet on the Private network profile. Run the launcher normally afterward. On each client device, trust the public root certificate printed by the launcher before signing in. [Caddy local HTTPS](https://caddyserver.com/docs/automatic-https#local-https)
+
 ### Caddy and Playit Premium
 
 For an HTTPS reverse proxy, start Node in `proxy` mode behind Caddy. Caddy preserves the original host and sets the forwarded HTTPS protocol. Keep the Node port on loopback and route Playit to Caddy. Playit's HTTPS tunnel requires Premium and terminates TLS on your server through Caddy. Create the tunnel using the Playit guide, then substitute your chosen hostname in [the Caddy template](Caddyfile.example). [Playit HTTPS tunnel setup](https://playit.gg/support/https-tunnel/) · [Caddy reverse proxy headers](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy)

@@ -28,9 +28,9 @@ export function username(value) {
   return value;
 }
 
-export function password(value, min = 12) {
-  if (typeof value !== 'string' || value.length < min || Buffer.byteLength(value) > 256 || !value.trim()) {
-    throw new HttpError(400, 'Use at least ' + min + ' characters and at most 256 bytes for the password.');
+export function password(value) {
+  if (typeof value !== 'string' || !value.trim() || Buffer.byteLength(value) > 256) {
+    throw new HttpError(400, 'Use at least one non-whitespace character and at most 256 bytes for the password.');
   }
   return value;
 }
@@ -106,7 +106,7 @@ export function openStore(directory) {
 }
 
 export async function bootstrap(store, initial) {
-  const hash = await passwordHash(password(initial, 8));
+  const hash = await passwordHash(password(initial));
   store.tx(() => {
     if (store.get('SELECT id FROM users LIMIT 1')) throw new HttpError(409, 'Accounts already exist.');
     store.run('INSERT INTO users(username,display,role,hash,change_required,created,updated) VALUES(?,?,?,?,1,?,?)',

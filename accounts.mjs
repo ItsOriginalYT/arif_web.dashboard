@@ -27,7 +27,7 @@ export function accounts(store) {
 
   async function login(body, response, secure) {
     const name = username(body.username);
-    const pass = password(body.password, 1);
+    const pass = password(body.password);
     const record = get('SELECT id,hash FROM users WHERE username=? COLLATE NOCASE AND disabled=0', name);
     const valid = await verify(pass, record?.hash);
     if (!record || !valid) throw new HttpError(401, 'Invalid username or password.');
@@ -46,7 +46,7 @@ export function accounts(store) {
   }
 
   async function changePassword(user, body, response, secure, assertCurrent) {
-    const oldPassword = password(body.current, 1);
+    const oldPassword = password(body.current);
     const nextPassword = password(body.password);
     if (oldPassword === nextPassword) throw new HttpError(400, 'Choose a different password.');
     const old = get('SELECT hash FROM users WHERE id=?', user.id);

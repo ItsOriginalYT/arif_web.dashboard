@@ -140,7 +140,7 @@ export function admin(parent, state, lifecycle, controller) {
         value: user?.username ?? defaultName, autocomplete: 'off' });
       const display = el('input', { maxLength: 64, value: user?.display ?? '' });
       const role = select([['member', 'Member'], ['admin', 'Administrator']], user?.role ?? 'member', { disabled: own });
-      const secret = el('input', { type: 'password', required: !user, minLength: 12, maxLength: 256,
+      const secret = el('input', { type: 'password', required: !user, maxLength: 256,
         autocomplete: 'new-password', disabled: own });
       const disabled = el('input', { type: 'checkbox', checked: Boolean(user?.disabled), disabled: own });
       const error = labelError();

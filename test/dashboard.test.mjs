@@ -43,7 +43,7 @@ function fixtureFeed(url, init) {
   throw new Error('Unexpected test provider request: ' + url);
 }
 
-async function instance(t, overrides = {}) {
+async function instance(t, overrides = {}, bootstrapPassword = initial) {
   const directory = await mkdtemp(join(tmpdir(), 'arif-webdashboard-test-'));
   const app = createDashboard({ mode: 'local', directory, port: 8765,
     account: { username: 'fixture', password: 'fixture-secret' }, ...overrides }, fixtureFeed);
@@ -56,8 +56,8 @@ async function instance(t, overrides = {}) {
     }
     await rm(directory, { recursive: true, force: true });
   });
-  await bootstrap(app.store, initial);
-  await assert.rejects(bootstrap(app.store, initial), { status: 409 });
+  await bootstrap(app.store, bootstrapPassword);
+  await assert.rejects(bootstrap(app.store, bootstrapPassword), { status: 409 });
   app.server.listen(0, '127.0.0.1');
   await once(app.server, 'listening');
   const url = 'http://127.0.0.1:' + app.server.address().port;
@@ -160,6 +160,19 @@ test('login, first password rotation, account roles and CSRF protection', async 
   assert.equal(ui.status, 200);
   assert.match(ui.headers.get('content-security-policy'), /frame-ancestors 'none'/);
   await ui.text();
+});
+
+test('one-character passwords work for setup, account creation, changes and resets', async t => {
+  const app = await instance(t, {}, 'a');
+  const admin = client(app);
+  await signIn(admin, 'Administrator', 'a', 'b');
+  assert.equal((await admin.call('password', { current: 'b', password: '' })).status, 400);
+  assert.equal((await admin.call('admin/users', { username: 'blank', password: ' ' })).status, 400);
+  const member = await ok(admin, 'admin/users', { username: 'member1', password: 'c' });
+  await signIn(client(app), member.username, 'c', 'd');
+  await ok(admin, 'admin/users/' + member.id, { action: 'edit', password: 'e' });
+  await signIn(client(app), member.username, 'e', 'f');
+  assert.equal((await signIn(client(app), member.username, 'f')).change_required, 0);
 });
 
 test('direct messages, authenticated downloads, limits and account deletion', async t => {

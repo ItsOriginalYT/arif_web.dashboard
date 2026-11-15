@@ -68,9 +68,9 @@ function authPage() {
   const current = el('input', { name: 'current', type: 'password', autocomplete: 'current-password', required: true,
     maxLength: 256, autofocus: changing });
   const next = el('input', { name: 'password', type: 'password', autocomplete: 'new-password', required: true,
-    minLength: 12, maxLength: 256 });
+    maxLength: 256 });
   const confirm = el('input', { name: 'confirmation', type: 'password', autocomplete: 'new-password',
-    required: true, minLength: 12, maxLength: 256 });
+    required: true, maxLength: 256 });
   const error = labelError();
   const submitButton = submit(changing ? 'Set password' : 'Sign in');
   const form = el('form', { className: 'stack' },
@@ -202,8 +202,8 @@ function settings(parent, model, lifecycle) {
     });
   };
   const old = el('input', { type: 'password', autocomplete: 'current-password', required: true, maxLength: 256 });
-  const next = el('input', { type: 'password', autocomplete: 'new-password', required: true, minLength: 12, maxLength: 256 });
-  const confirm = el('input', { type: 'password', autocomplete: 'new-password', required: true, minLength: 12, maxLength: 256 });
+  const next = el('input', { type: 'password', autocomplete: 'new-password', required: true, maxLength: 256 });
+  const confirm = el('input', { type: 'password', autocomplete: 'new-password', required: true, maxLength: 256 });
   const passwordError = labelError();
   const change = submit('Change password');
   const passwordForm = el('form', { className: 'stack' }, el('div', { className: 'form-grid' },
